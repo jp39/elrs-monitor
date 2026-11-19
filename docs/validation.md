@@ -19,8 +19,19 @@ Focused before/after execution on the same short deterministic hopping IQ
 reduced DSP jobs from 16 to 5 with all six frames retained. Total case runtime
 (including synthetic IQ construction) was 0.329s versus 0.213s on this machine;
 this is not a live-latency measurement. The existing handover/log check also
-passes. No new test cases were added for this patch. Live confirmation of the
-performance fix is pending; the active monitor must be restarted to load it.
+passes. No new test cases were added for this patch.
+
+A subsequent **12-second active-transmitter live run** at 50Hz/Wide/MM ID 0
+produced **445 RC and 4 sync packets**, with valid frames on **all 80 nominal
+hop channels**, **zero application-queue drops**, 249 retunes, and no recorded
+reacquisitions or CRC/FEC/timing/frequency rejection counters. Maximum decoded
+RC gap was **60ms**. Retune exclusions totaled 1.089s; maximum control call was
+1.312ms. Final phase was following. Frame/status artifacts are
+`/tmp/elrs-hop-061-live-frames.jsonl` and `/tmp/elrs-hop-061-live-status.log`.
+
+This is a short headless live check, not a guaranteed complete control stream
+or a measurement of stick-to-display latency. Long-running TUI reception and
+other PHYs remain to validate. Restart existing processes to load the fix.
 
 ## Current live hop-following implementation
 
@@ -61,9 +72,9 @@ antenna bias were off. This exercised transport/tuning, not ELRS packet yield.
 
 A separate ten-second 50Hz/Wide/Model Match ID 0 live monitor run completed
 cleanly, but detected no ELRS PHY candidates on the acquisition channel.
-**End-to-end live hop-following reception with an active transmitter remains
-unverified.** In particular, neither full-rate reception nor new live latency
-figures are claimed. Faster PHYs may lose several slots in retune exclusions.
+At that stage no active-transmitter packet check had succeeded. The subsequent
+0.6.1 active-transmitter result is recorded above; neither guaranteed full-rate
+reception nor stick-to-display latency is claimed. Faster PHYs may lose several slots in retune exclusions.
 
 ### Physical fixture and replay checks
 

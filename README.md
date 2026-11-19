@@ -311,8 +311,10 @@ across the full sequence, not all 80 carriers simultaneously. Some slots carry
 sync/data/telemetry, and retune uncertainty can still exclude RC packets.
 At 50Hz the scheduler uses the idle time after the old hop's last packet to
 retune before the next packet. Faster profiles have much less idle time, so
-several slots per hop may be lost. Full-rate live reception is **not yet RF
-validated**. Stable frequency spans are batched into one job per typical 50Hz hop;
+several slots per hop may be lost. A short live 50Hz/Wide/MM ID 0 run received **445 RC packets in 12 seconds**
+across all 80 channels, with zero application-queue drops and a maximum decoded
+RC gap of 60ms. This does **not** guarantee full-rate reception; other PHYs
+and long-running TUI performance still need RF validation. Stable frequency spans are batched into one job per typical 50Hz hop;
 acquisition uses at most 40ms cores plus overlap, rather than tiny USB fragments.
 
 For comparison, the old fixed-band 20-second 50Hz/Wide replay yielded 138 RC
@@ -414,7 +416,8 @@ six 100ms blocks; pending DSP work adds latency too. Version 0.6.1 batches
 frequency spans, uses fast FFT lengths and skips expensive recovery of bursts
 belonging to guard regions. TUI footer T/H counts timing-grid / hop-frequency
 rejections, useful when following stalls without queue loss. UI refresh remains 100ms.
-No live latency guarantee is made before testing with an active transmitter.
+A short active-transmitter check is recorded above; no stick-to-display latency
+or loss-free long-run guarantee is made.
 
 **Limitations:**
 
