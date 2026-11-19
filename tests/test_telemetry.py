@@ -36,6 +36,28 @@ def downlink(d,cfg,nonce=0,kind=0):
 
 
 class TelemetryTests(unittest.TestCase):
+    def test_physical_50hz_receiver_turnaround_delay(self):
+        # Real connected TX+RX capture, not a packet sealed by the test helper.
+        p = PROFILES['50Hz']
+        cfg = dict(binding_phrase='julian',model_id=0,model_match=True,
+                   packet_rate=p.name,switch_mode='Wide',ota_version=4)
+        d = TrackingDecoder(cfg)
+        sync = observation(bytes.fromhex('72006115085fec9e'),2.200251819711539,p)
+        self.assertEqual(len(d.feed(sync)),1)
+        anchor = d.anchor
+        b = observation(bytes.fromhex('bc003780642f0007'),2.49163329375,p)
+        b['channel_hz'] = 2425400000
+        frame, = d.feed(b)
+        self.assertGreater(frame['slot_timing_error_us'],250)
+        self.assertLess(frame['slot_timing_error_us'],750)
+        self.assertEqual(frame['inferred_nonce'],112)
+        self.assertEqual(frame['telemetry']['uplink_rssi_1_dbm'],-55)
+        self.assertIsNone(frame['telemetry']['uplink_rssi_2_dbm'])
+        self.assertEqual(frame['telemetry']['uplink_snr_db'],11.75)
+        self.assertIs(d.anchor,anchor)
+        self.assertEqual(d.counts['rc'],0)
+        self.assertEqual(d.feed(dict(b,time_s=b['time_s']+.001)),[])
+
     def test_all_profiles_directions_nonce_wrap_modes_and_no_clock_or_rc_mutation(self):
         for p in PROFILES.values():
             for mode in (0,1):

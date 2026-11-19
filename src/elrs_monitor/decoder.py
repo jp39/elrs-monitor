@@ -115,7 +115,12 @@ class LiveDecoder:
             residual = r['time_s']-grid-offset
             # Keep this gate disjoint from the 100us uplink grid, including
             # the short 500Hz offset. A downlink NEVER enters _uplink().
-            tolerance = min(.00025,abs(offset)/3)
+            # Physical 50Hz RX reports start ~380us after the firmware-only
+            # TOCK estimate (RX IRQ/radio turnaround is not included there).
+            # Widen ONLY this RF-validated profile; stay far from the uplink
+            # grid and keep slot/nonce/CRC/frequency gates unchanged.
+            tolerance = min(.00075 if self.profile.name=='50Hz' else .00025,
+                            abs(offset)/3)
             if abs(residual) <= tolerance:
                 nonce = (self.anchor['sync']['nonce']+slots)&255
                 denominator = self.link_status['telemetry_denominator']

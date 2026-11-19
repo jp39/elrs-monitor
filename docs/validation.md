@@ -1,6 +1,40 @@
-# Validation — 0.7.0
+# Validation — 0.7.1
 
-## Receiver telemetry implementation (RF validation pending)
+## Connected receiver telemetry: physical 50Hz fix and validation
+
+The user's transmitter announced telemetry but the monitor showed RX UNSEEN.
+A 45s fixed-band raw capture exposed CRC-valid LINKSTATS packets with the correct
+UID/nonce, starting ~380us later than the firmware-only TOCK calculation.
+The original ±250us direction gate rejected them. Widened **50Hz only** to ±750us,
+still far from the uplink grid; slot, CRC/nonce, live FHSS frequency checks and
+the unchanged 4ms retune quarantine remain in effect. Other PHY timing gates
+are unchanged and their downlink reception remains RF-unvalidated.
+
+A subsequent **35s active connected TX+RX** run at 50Hz/Wide/MM ID0 yielded:
+
+- **90 link-statistics / 1,386 RC / 6 sync** packets.
+- **819 retunes**, including 102 selected early-retune decisions.
+- **Zero host queue drops and zero reacquisitions**; final phase following.
+- Maximum decoded RC gap **80.014ms**, final gap 20ms, final DSP lag 9.33ms.
+- Receiver RSSI about -55dBm, LQ 100%, SNR about +12dB, Model Match true;
+  second RSSI unavailable, true-diversity flag false.
+- Retune excluded IQ 3.572s, maximum control call 1.227ms.
+
+Physical fixture: sync `72006115085fec9e` at 2.200251819711539s,
+2440.4MHz, nonce97/index0; downlink `bc003780642f0007` at
+2.49163329375s, 2425.4MHz, nonce112. Residual to firmware-only prediction:
+**+397.444us**. A focused regression preserves this fixture, expected values,
+unchanged uplink anchor and RC count, and rejection outside the widened gate.
+Full suite: **124 tests pass**. These results are a bounded reception check,
+not a full-rate/loss-free guarantee or a stick-to-display latency measurement.
+
+Artifacts: `/tmp/elrs-telemetry-connected-raw.iq` (45s fixed-band),
+`/tmp/elrs-telemetry-connected-candidates.jsonl`, and
+`/tmp/elrs-telemetry-patched-live{.jsonl,.txt,.status}` (successful live run).
+Raw diagnostic replay originally produced 4 sync/162 RC with 10 off-grid rejects;
+this provided the failing physical downlink evidence, not a hopping benchmark.
+
+## 0.7.0 receiver telemetry implementation (before physical validation)
 
 Firmware reference: ExpressLRS 4.1.0 `a9d4a9c`, `OTA.h` packed std/full
 `data_dl`/`OTA_LinkStats_s`, shared nonce-seeded CRC, `rx_main.cpp`

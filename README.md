@@ -54,9 +54,12 @@ To clear the unchanged 4ms retune quarantine before telemetry, selected telemetr
 hops retune earlier, potentially losing the preceding uplink. Early tuning is
 capped at one in four hop boundaries to preserve uplink reception even at 1:2;
 standard ratios already satisfy that cap. Other downlinks may remain uncaptured.
-`telemetry_early_retunes` counts these decisions. **Live downlink yield and the RC
-tradeoff still need validation with a connected transmitter/receiver.** Synthetic
-checks and recorded-uplink regressions are not proof of real downlink reception.
+`telemetry_early_retunes` counts these decisions. **50Hz/Wide/MM ID0 has a connected
+TX+RX live check: 90 link-statistics reports, 1,386 RC and 6 sync in 35 seconds,
+zero host drops/reacquisitions, maximum decoded RC gap 80ms.** The 50Hz timing
+gate includes the measured ~380–400us RX IRQ/radio-turnaround delay missing from
+the firmware-only estimate. Other PHY downlinks, custom ratios and MAVLink remain
+unvalidated on live RF; no complete telemetry or RC stream is guaranteed.
 
 ## Install
 
@@ -485,7 +488,7 @@ or loss-free long-run guarantee is made.
 - No automatic rate/switch discovery or UID discovery from normal traffic.
   Binding discovery requires an explicit transmitter Bind session.
 - No FLRC, Gemini, CRSF sensor/MAVLink message decoding, or data-payload reassembly.
-  Receiver link-statistics decoding is implemented but not yet validated on live downlink RF.
+  Receiver link-statistics decoding is live-RF validated at 50Hz/Wide only.
 - No command/transmit path, firmware flashing, receiver binding, or failsafe
   control. The dashboard is an instrument, not a flight-control receiver.
 - Use low transmitter power and antenna separation. Never directly connect a

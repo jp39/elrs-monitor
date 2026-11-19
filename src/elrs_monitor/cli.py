@@ -30,7 +30,9 @@ def format_frame(frame):
     if 'telemetry' in frame:
         t = frame['telemetry']
         if t['kind']=='link_statistics':
-            return (f"{prefix} RX LINKSTATS RSSI1={t['uplink_rssi_1_dbm']} RSSI2={t['uplink_rssi_2_dbm']}dBm"
+            rssi1 = '--' if t['uplink_rssi_1_dbm'] is None else str(t['uplink_rssi_1_dbm'])
+            rssi2 = '--' if t['uplink_rssi_2_dbm'] is None else str(t['uplink_rssi_2_dbm'])
+            return (f"{prefix} RX LINKSTATS RSSI1={rssi1}dBm RSSI2={rssi2}dBm"
                     f" LQ={t['uplink_lq_percent']}% SNR={t['uplink_snr_db']:+.2f}dB"
                     f" antenna={t['active_antenna']} MM={t['model_match']}"
                     f" diversity={t['true_diversity_available']} CRC=OK")
