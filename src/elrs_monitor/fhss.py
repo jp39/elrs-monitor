@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Upstream provenance and attribution: see THIRD_PARTY_NOTICES.md.
 """ELRS 4.1 OTA-v4 ISM2G4 sequence and unwrapped slot/hop prediction.
 
 Port of OtaGetUidSeed, random.cpp and FHSSrandomiseFHSSsequenceBuild.

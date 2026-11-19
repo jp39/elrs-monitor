@@ -647,6 +647,20 @@ remaining inferred long-interleaver extensions; more physical captures are requi
 Protocol tests use deterministic packet fixtures and example phrases, with no
 external settings required.
 
+## License and attribution
+
+Copyright (C) 2026 ELRS Monitor contributors. The project is licensed under the
+**GNU General Public License, version 3 only (GPL-3.0-only)**. See [LICENSE](LICENSE).
+It is provided **without warranty**. When distributing modified versions or
+binaries, retain the required notices and provide corresponding source as the
+GPL requires.
+
+The FHSS implementation includes a Python adaptation of ExpressLRS code;
+ExpressLRS and gr-lora_sdr also informed protocol and coding behavior. Their
+upstream authors retain their rights. See [third-party notices and provenance](THIRD_PARTY_NOTICES.md)
+for attribution and the separate licenses of external runtime libraries/drivers.
+This is an independent project, not an official ExpressLRS product.
+
 Reference material (not vendored dependencies):
 
 - [ExpressLRS 4.1.0](https://github.com/ExpressLRS/ExpressLRS/tree/4.1.0),

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Upstream provenance and attribution: see THIRD_PARTY_NOTICES.md.
 """ELRS OTA-v4 LoRa packet parsing, long interleaving, FEC, and CRC."""
 import hashlib
 import re
