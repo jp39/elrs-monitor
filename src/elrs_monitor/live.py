@@ -91,7 +91,7 @@ def run_live(args, config, observer, stop=None):
     target = get_profile(config.get('packet_rate','250Hz'))
     if args.backend == 'soapy':
         from .soapy import SoapySource
-        source = SoapySource(args)
+        source = SoapySource(args, on_message=observer.on_message)
     else:
         source = NativeSource(args)
     follower = None

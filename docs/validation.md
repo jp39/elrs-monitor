@@ -1,4 +1,28 @@
-# Validation — 0.9.0
+# Validation — 0.9.1
+
+## SoapySDR TUI log isolation
+
+SoapySDR's default C logger prints directly to stderr, including bare SSI stream
+indicators. This bypasses curses' screen/cursor cache and can corrupt unchanged
+labels after output wraps/scrolls the terminal. The live Soapy transport now
+registers a retained ctypes log callback **before opening the device**, routes
+sanitized messages/severity into the existing observer event buffer, and restores
+the default logger only after device teardown. Startup failures also unregister
+it; callback exceptions cannot escape into ctypes' stderr exception reporting.
+The native backend and DSP/scheduling paths are unchanged.
+
+**134 tests pass**, including callback routing/severity, no Python terminal writes,
+exception containment and startup-failure logger cleanup. A separate real-curses
+PTY check (`/tmp/elrs-soapy-tui-log-check.py`) injects actual SoapySDR C INFO and SSI
+logs while the dashboard is active: both appear as EVENTS, no raw `[INFO]` output
+escapes, and quit restores the terminal. No SDR is opened by this check. This
+verifies the interference path and its removal; confirmation of the user's exact
+visual symptom still requires restarting their running TUI.
+
+The user-provided `elrs-demo.gif` is tracked and embedded in the README. The
+source `.cast` recording is not automatically added.
+
+## 0.9.0 optional SoapySDR transport, native backend retained
 
 ## Optional SoapySDR transport, native backend retained
 

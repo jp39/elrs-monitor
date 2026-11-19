@@ -6,6 +6,8 @@ TUI, text/JSON output, frame logging, and deterministic IQ replay.
 use the same HackRF; other devices are not yet RF-validated. See
 [backend selection and installation](docs/soapy.md).
 
+![ELRS Monitor live channel dashboard demo](elrs-demo.gif)
+
 **Target:** ExpressLRS 4.1.0 / OTA-v4, **2.4 GHz LoRa**, non-Gemini. Six
 LoRa profiles and all corresponding switch modes are configurable. **250Hz /
 Hybrid and 50Hz / Wide have physical IQ recordings. All six PHY profiles now

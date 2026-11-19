@@ -1,12 +1,13 @@
 """Focused optional-transport contracts; not physical RF validation."""
 import ctypes as C
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
+from types import SimpleNamespace
 
 import numpy as np
 
 from elrs_monitor.cli import parse_args
-from elrs_monitor.soapy import SoapySource, OVERFLOW, HAS_TIME, END_ABRUPT
+from elrs_monitor.soapy import SoapyAPI, SoapySource, OVERFLOW, HAS_TIME, END_ABRUPT
 
 
 class FakeAPI:
@@ -45,6 +46,10 @@ class FakeAPI:
     def strings(self, name, *args):
         return self.formats if name=='getStreamFormats' else ['AMP','LNA','VGA']
 
+    def set_log_handler(self, handler):
+        self.log_handler = handler
+        self.calls.append(('log_handler',(handler,)))
+
     def frequency_ranges(self, device): return [(0,6_000_000_000)]
 
     def settings(self, device): return ['bias_tx']
@@ -53,6 +58,34 @@ class FakeAPI:
 class SoapyTests(unittest.TestCase):
     def args(self, *extra):
         return parse_args(['--uid','13ad5fd3','--backend','soapy',*extra])
+
+    def test_native_log_callback_routes_events_without_terminal_writes(self):
+        api = SoapyAPI.__new__(SoapyAPI)
+        register = Mock()
+        api.lib = SimpleNamespace(SoapySDR_registerLogHandler=register)
+        messages = []
+        api.set_log_handler(lambda text,level: messages.append((text,level)))
+        callback = register.call_args.args[0]
+        with patch('sys.stdout') as out,patch('sys.stderr') as err:
+            callback(6,b'Opening HackRF\n')
+            callback(9,b'O')
+            callback(3,b'failure')
+            self.assertEqual(messages,[('SoapySDR: Opening HackRF','info'),
+                                       ('SoapySDR: O','warning'),('SoapySDR: failure','error')])
+            api.set_log_handler(lambda *a: (_ for _ in ()).throw(ValueError('observer failed')))
+            api._log_callback(6,b'never escape into ctypes/stderr')
+            out.write.assert_not_called();err.write.assert_not_called()
+        api.set_log_handler(None)
+        self.assertFalse(register.call_args.args[0])
+        self.assertIsNone(api._log_callback)
+        # Partial startup failures also restore the default logger, exactly once.
+        fake = FakeAPI(fail='makeStrArgs')
+        source = SoapySource(self.args(),fake,on_message=lambda *a:None)
+        with self.assertRaises(RuntimeError):source.start()
+        source.close()
+        handlers = [a[0] for n,a in fake.calls if n=='log_handler']
+        self.assertEqual(len(handlers),2)
+        self.assertIsNone(handlers[-1])
 
     def test_rx_only_configuration_duration_and_cleanup(self):
         api = FakeAPI([(b'\x01\xff'*20000,0,0)])

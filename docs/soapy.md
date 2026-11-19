@@ -24,6 +24,13 @@ do not combine it with a `serial=` entry in `--device`. `--device` and `--gain`
 require SoapySDR. Replay never opens either SDR backend and rejects Soapy-only
 options. No configuration file is loaded.
 
+SoapySDR's process-global C logger is redirected into the application's observer
+before opening the device and remains redirected until device teardown. The TUI
+shows driver messages in EVENTS; headless operation uses its normal message output.
+This prevents native stderr/stream-indicator writes from scrolling or overwriting
+the curses display. Log callbacks never call curses directly; the default logger
+is restored after teardown. Only one owned Soapy session is supported per process.
+
 The chosen backend is announced at startup. Status JSON includes `backend`,
 `radio_driver`, `stream_format` and `stream_overflows`. The latter is `null`
 for native HackRF, which does not expose a driver-overflow counter here.

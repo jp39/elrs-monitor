@@ -21,6 +21,7 @@ from .hackrf import Epoch, RadioBlock  # Shared block contract; no libhackrf cal
 RX = 1
 TIMEOUT, OVERFLOW = -1, -4
 HAS_TIME, END_ABRUPT = 1 << 2, 1 << 3
+LogHandler = C.CFUNCTYPE(None, C.c_int, C.c_char_p)
 
 
 class Kwargs(C.Structure):
@@ -78,12 +79,43 @@ class SoapyAPI:
         for name, (result, args) in signatures.items():
             f = getattr(self.lib, 'SoapySDRDevice_'+name)
             f.restype, f.argtypes = result, args
+        self.lib.SoapySDR_registerLogHandler.argtypes = [LogHandler]
+        self.lib.SoapySDR_registerLogHandler.restype = None
+        self._log_callback = None
         self.lib.SoapySDR_free.argtypes = [p]
         self.lib.SoapySDR_free.restype = None
         self.lib.SoapySDRStrings_clear.argtypes = [C.POINTER(C.POINTER(C.c_char_p)), z]
         self.lib.SoapySDRStrings_clear.restype = None
         self.lib.SoapySDRArgInfoList_clear.argtypes = [C.POINTER(ArgInfo), z]
         self.lib.SoapySDRArgInfoList_clear.restype = None
+
+    def set_log_handler(self, on_message):
+        """Own the process-global logger until RX teardown; never print from C.
+
+        Soapy's default fprintf/SSI output bypasses curses and can scroll its
+        physical screen without updating ncurses' cached cursor/screen state.
+        Keep the ctypes callback alive, including throughout device destruction.
+        """
+        if on_message is None:
+            self.lib.SoapySDR_registerLogHandler(LogHandler())
+            self._log_callback = None
+            return
+
+        def receive(level, message):
+            try:
+                text = (message or b'').decode(errors='replace')[:4096]
+                text = ''.join(c if c.isprintable() else ' ' for c in text).strip()
+                severity = 'error' if level<=3 else 'warning' if level in (4,9) else 'info'
+                if text:
+                    on_message('SoapySDR: '+text, severity)
+            except Exception:
+                # Exceptions escaping a ctypes callback themselves print to
+                # stderr. Logging must never break the C boundary or the TUI.
+                pass
+
+        callback = LogHandler(receive)
+        self.lib.SoapySDR_registerLogHandler(callback)
+        self._log_callback = callback
 
     def get(self, name, *args):
         result = getattr(self.lib, 'SoapySDRDevice_'+name)(*args)
@@ -134,8 +166,10 @@ class SoapyAPI:
 class SoapySource:
     SETTLE_SECONDS = .004
 
-    def __init__(self, args, api=None):
+    def __init__(self, args, api=None, on_message=None):
         self.args, self.api = args, api
+        self.on_message = on_message
+        self._log_redirected = False
         self.device = self.stream = None
         self.streaming = False
         self.thread = None
@@ -168,6 +202,9 @@ class SoapySource:
     def _open(self):
         if self.api is None:
             self.api = SoapyAPI()
+        if self.on_message is not None:
+            self.api.set_log_handler(self.on_message)
+            self._log_redirected = True
         selector = self.args.device or 'driver=hackrf'
         if self.args.serial:
             if any(part.strip().startswith('serial=') for part in selector.split(',')):
@@ -364,5 +401,8 @@ class SoapySource:
                         errors.append(exc)
             self.streaming = False
             self.stream = self.device = None
+            if self._log_redirected:
+                self.api.set_log_handler(None)
+                self._log_redirected = False
             if errors:
                 raise errors[0]
