@@ -1,7 +1,7 @@
 """Default live monitor: acquire sync, follow FHSS, reacquire on loss.
 
 Continuous libhackrf RX replaces hackrf_transfer/fixed-band live capture.
-DSP uses short USB-sized cores on the selected channel; an independent thread
+DSP batches contiguous stable frequency spans; an independent thread
 controls tuning. Each frequency epoch is filtered separately. Replay remains
 in engine.py because legacy raw files contain no retune metadata.
 """
@@ -15,7 +15,7 @@ import threading
 import time
 
 from .binding import BindingDiscoveryDecoder
-from .capture import WindowAssembler
+from .capture import Window
 from .constants import FS
 from .decoder import identity_details
 from .engine import process_window,process_acquisition_window
@@ -36,6 +36,49 @@ def process_radio_window(window, center, epoch, target, binding):
     return observations
 
 
+class RadioWindows:
+    """Batch a stable RF epoch, not every (possibly tiny) USB fragment.
+
+    Following 50Hz produces one DSP job per hop instead of several overlapping
+    fragment jobs. Acquisition is bounded to 40ms cores plus right lookahead.
+    Known sample gaps and frequency changes always terminate a window.
+    """
+    def __init__(self, guard):
+        self.guard = guard
+        self.core = FS//25
+        self.data = bytearray()
+        self.left = b''
+        self.start = None
+        self.center = self.epoch = None
+
+    def _window(self, count, right=0):
+        w = Window(self.left+bytes(self.data[:(count+right)*2]),
+                   self.start-len(self.left)//2,self.start,self.start+count)
+        return w,self.center,self.epoch
+
+    def finish(self):
+        result = self._window(len(self.data)//2) if self.data else None
+        self.data.clear();self.left = b'';self.start = None
+        return result
+
+    def feed(self, block):
+        out = []
+        if self.start is not None and (block.epoch!=self.epoch or block.center_hz!=self.center
+                                      or block.start!=self.start+len(self.data)//2):
+            tail = self.finish()
+            if tail is not None:
+                out.append(tail)
+        if self.start is None:
+            self.start,self.center,self.epoch = block.start,block.center_hz,block.epoch
+        self.data.extend(block.data)
+        while len(self.data)//2 >= self.core+self.guard:
+            out.append(self._window(self.core,self.guard))
+            self.left = bytes(self.data[max(0,self.core-self.guard)*2:self.core*2])
+            del self.data[:self.core*2]
+            self.start += self.core
+        return out
+
+
 def run_live(args, config, observer, stop=None):
     stop = stop if stop is not None else threading.Event()
     requested = config.get('discover_binding',False)
@@ -47,8 +90,7 @@ def run_live(args, config, observer, stop=None):
     learned = None
     confirmations = 0
     guard = math.ceil((max(target.airtime,get_profile('50Hz').airtime)+.001)*FS/400)*400
-    assembler = WindowAssembler(guard)
-    epoch = center = None
+    assembler = RadioWindows(guard)
     jobs = deque()
     windows = 0
     processed = minimum_time = 0.0
@@ -144,12 +186,11 @@ def run_live(args, config, observer, stop=None):
                 consume(jobs.popleft())
 
     def reacquire(message):
-        nonlocal assembler,epoch,minimum_time
+        nonlocal assembler,minimum_time
         source.recalibrate()
         minimum_time = source.radio_time() or source.samples/FS
         decoder.reset()
-        assembler = WindowAssembler(guard)
-        epoch = None
+        assembler = RadioWindows(guard)
         if follower is not None:
             if not follower.lost.is_set():
                 follower.invalidate()
@@ -182,7 +223,14 @@ def run_live(args, config, observer, stop=None):
                             reacquire('Hop lock lost; returning to sync-channel acquisition. UID retained.')
                     if source.dropped_samples != dropped:
                         dropped = source.dropped_samples
-                        reacquire('Host IQ queue overflow; reacquiring. Known identity is retained.')
+                        decoder.counts['host_queue_overruns'] += 1
+                        # The callback counter still includes every dropped
+                        # queued sample. This is a KNOWN gap, not a loss of the
+                        # underlying clock. RadioWindows will not stitch it.
+                        # Keep following unless normal validation times out.
+                        if acquiring():
+                            decoder.reset()
+                        observer.on_message('Host IQ queue overflow; retaining hop clock across known sample gap.','warning')
                     while jobs and jobs[0][1].done():
                         consume(jobs.popleft())
                     try:
@@ -190,16 +238,8 @@ def run_live(args, config, observer, stop=None):
                     except queue.Empty:
                         block = None
                     if block is not None:
-                        if block.epoch != epoch or block.center_hz != center:
-                            submit(pool,assembler.finish(),center,epoch)
-                            assembler = WindowAssembler(guard)
-                            epoch,center = block.epoch,block.center_hz
-                        if assembler.pending is not None and block.start != assembler.pending.end:
-                            # Never stitch across a known excluded interval.
-                            submit(pool,assembler.finish(),center,epoch)
-                            assembler = WindowAssembler(guard)
-                        window,_ = assembler.feed(block)
-                        submit(pool,window,center,epoch)
+                        for window,center,epoch in assembler.feed(block):
+                            submit(pool,window,center,epoch)
                     if source.finished.is_set() and source.queue.empty():
                         break
                     now = time.monotonic()
@@ -208,7 +248,9 @@ def run_live(args, config, observer, stop=None):
                     if now-last_status >= .1:
                         status();last_status = now
                 if not stop.is_set():
-                    submit(pool,assembler.finish(),center,epoch)
+                    tail = assembler.finish()
+                    if tail is not None:
+                        submit(pool,*tail)
                     while jobs:
                         consume(jobs.popleft())
             finally:

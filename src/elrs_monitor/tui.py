@@ -131,7 +131,8 @@ def render_lines(view,width,height,paused=False,scroll=0):
               Line((f"FHSS 80 channels | retunes {counts.get('retunes',0)} | excluded "
                     f"{status.get('retune_discarded_seconds',0):.3f}s"
                     +(f" | ctrl max {status.get('retune_max_seconds',0)*1000:.2f}ms"
-                      if status.get('radio_diagnostics') else ' | gaps possible')
+                      if status.get('radio_diagnostics') else
+                      f" | T/H {counts.get('off_grid',0)}/{counts.get('hop_frequency_failures',0)}")
                     if status.get('capture_mode')=='hop-following' else
                     f"PARTIAL BAND: {view['channel_count']} hop channels. Last seen values are NOT failsafe/live control."), 'warning')]
     available = max(0, height-len(lines)-1)

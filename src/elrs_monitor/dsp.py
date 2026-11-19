@@ -19,7 +19,10 @@ def fft_channels(raw, offsets):
     x = raw.astype(np.float32).view(np.complex64) / 128
     # Multiples of 400 input samples give integer output lengths and integer
     # FFT shifts for all supported 1 MHz-spaced ELRS centers ending in .4 MHz.
-    padding = (-len(x)) % 400
+    # Keep the RF grid, but avoid slow prime-factor FFTs when USB/retune
+    # fragments have arbitrary lengths. The output length is then 65*m.
+    padded_length = 400*fft.next_fast_len((len(x)+399)//400)
+    padding = padded_length-len(x)
     if padding:
         x = np.pad(x, (0, padding))
     x -= x.mean()
@@ -98,6 +101,12 @@ def extract_window(raw, window_start, core_start, core_end, offsets, profile=DEF
     """Yield PHY observations with absolute sample-clock timestamps."""
     for offset, y in fft_channels(raw, offsets):
         for start, end, power in find_bursts_fast(y,profile):
+            # Guard bursts belong to adjacent cores. Avoid repeating expensive
+            # preamble/interpolation recovery there. Retain a generous 2ms
+            # margin for energy-edge and coarse-symbol timing uncertainty.
+            approximate_time = window_start/FS+start/RATE
+            if approximate_time < core_start/FS-.002 or approximate_time >= core_end/FS+.002:
+                continue
             candidate = fast_preamble(y,start,profile)
             if candidate is None:
                 continue

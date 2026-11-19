@@ -312,7 +312,8 @@ sync/data/telemetry, and retune uncertainty can still exclude RC packets.
 At 50Hz the scheduler uses the idle time after the old hop's last packet to
 retune before the next packet. Faster profiles have much less idle time, so
 several slots per hop may be lost. Full-rate live reception is **not yet RF
-validated**. Short USB-sized cores replace the old 100ms live cores.
+validated**. Stable frequency spans are batched into one job per typical 50Hz hop;
+acquisition uses at most 40ms cores plus overlap, rather than tiny USB fragments.
 
 For comparison, the old fixed-band 20-second 50Hz/Wide replay yielded 138 RC
 packets (6.9/s), with gaps up to 960ms. The new high-duty-cycle detector retains
@@ -376,8 +377,8 @@ Useful options:
    a bounded queue and keeps an absolute sample counter.
 2. Acquisition listens on 2440.4MHz. A UID-derived 240-entry sequence (three
    permutations of 80 channels) and a normal sync establish hop index and nonce.
-   An independent timing thread retunes the receiver; short overlapped USB-sized
-   cores are channelized at +400kHz from each tune center to avoid DC. Different
+   An independent timing thread retunes the receiver; batched stable frequency
+   spans (bounded 40ms cores plus overlap during acquisition) are channelized at +400kHz from each tune center to avoid DC. Different
    frequency epochs are never stitched together. Replay alone retains 100ms
    fixed-band cores and its nine-channel FFT bank.
 3. The selected SF5–8 chirps, preamble, sync word, timing, and carrier offset
@@ -402,11 +403,17 @@ is excluded and reported separately from queue loss. These host-time boundaries
 are estimates: HackRF does not provide hardware sample timestamps here.
 
 After at least 500ms without validated packets (or six hop periods, whichever
-is longer), live reception returns to sync acquisition. Queue overflows also
-reset tracking. The known UID remains in memory. The host/sample timing estimate
+is longer), live reception returns to sync acquisition. Known application-queue gaps do **not** discard the hop clock: the native
+callback counter still includes those samples. Windows never stitch across
+the gap, and tracking continues only while CRC/grid/frequency validation stays
+current. Unknown loss or validation timeout still triggers reacquisition.
+The known UID remains in memory. The host/sample timing estimate
 is recalibrated after suspected loss; no exact hardware/USB loss count is claimed.
 Six queued USB-sized segments bound the raw live queue, rather than the former
-six 100ms blocks; pending DSP work adds latency too. UI refresh remains 100ms.
+six 100ms blocks; pending DSP work adds latency too. Version 0.6.1 batches
+frequency spans, uses fast FFT lengths and skips expensive recovery of bursts
+belonging to guard regions. TUI footer T/H counts timing-grid / hop-frequency
+rejections, useful when following stalls without queue loss. UI refresh remains 100ms.
 No live latency guarantee is made before testing with an active transmitter.
 
 **Limitations:**

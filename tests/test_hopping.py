@@ -336,14 +336,14 @@ class LiveEngineTests(unittest.TestCase):
         sources=[]
         def create(args):s=Source(args);sources.append(s);return s
         def process(w,center,epoch,target,binding):
-            if w.core_start==0:out=[binding_observation(.095,binding_packet(uid))]
-            elif w.core_start==1_000_000:
-                out=[binding_observation(t,binding_packet(uid)) for t in (.135,.175)]
-                if normal:out.append(observation(sync_packet(p,cfg,1),.191,p))
-            else:
-                out=[observation(rc_packet(p,cfg,2),.211,p)] if normal else []
-                for b in out:b['channel_hz']=next_center+CHANNEL_OFFSET_HZ
-            return [dict(b,rx_center_hz=center,capture_epoch=epoch) for b in out]
+            out=[binding_observation(t,binding_packet(uid)) for t in (.095,.135,.175)]
+            if normal:
+                out.append(observation(sync_packet(p,cfg,1),.191,p))
+                rc=observation(rc_packet(p,cfg,2),.211,p)
+                rc['channel_hz']=next_center+CHANNEL_OFFSET_HZ
+                out.append(rc)
+            return [dict(b,rx_center_hz=center,capture_epoch=epoch) for b in out
+                    if w.core_start/1e7 <= b['time_s'] < w.core_end/1e7]
         flags=['--discover-binding','--rate','50','--switch-mode','Wide','--model-match','on','--model-id','0']
         if log:flags+=['--jsonl',str(log)]
         args=parse_args(flags);observer=Observer()

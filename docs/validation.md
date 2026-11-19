@@ -1,4 +1,26 @@
-# Validation — 0.6.0
+# Validation — 0.6.1
+
+## Live-user regression and patch
+
+A user 60-second 50Hz/Wide/MM ID 0 run of 0.6.0 reported 13 syncs, only
+105 RC frames, 0.283 seconds of queue drops and repeated overflow-triggered
+reacquisition. This confirms reception while hopping but is a performance
+regression, not acceptable continuous monitoring. Current backlog being low
+at the screenshot does not rule out earlier transient overload.
+
+0.6.1 batches stable RF spans rather than processing tiny retune/USB fragments.
+Known software-queue loss no longer invalidates the otherwise continuous
+callback sample counter/hop clock. It remains a gap and is never stitched;
+CRC/grid/frequency validation and loss-of-lock timeout still apply. FFT lengths
+are padded to fast grid-compatible sizes; guard-only bursts avoid repeated
+expensive symbol recovery.
+
+Focused before/after execution on the same short deterministic hopping IQ
+reduced DSP jobs from 16 to 5 with all six frames retained. Total case runtime
+(including synthetic IQ construction) was 0.329s versus 0.213s on this machine;
+this is not a live-latency measurement. The existing handover/log check also
+passes. No new test cases were added for this patch. Live confirmation of the
+performance fix is pending; the active monitor must be restarted to load it.
 
 ## Current live hop-following implementation
 
@@ -8,7 +30,7 @@ the FHSS sequence after a validated normal sync. The old fixed-band live
 subprocess implementation is removed, not selectable by an opt-in/opt-out flag.
 Fixed-center raw recording replay remains supported.
 
-**120 automated tests pass**, including all prior protocol/replay regressions
+The **0.6.0 suite's 120 tests passed**, including all prior protocol/replay regressions
 and new checks for:
 
 - All 240 sequence entries against independently compiled ExpressLRS 4.1.0
