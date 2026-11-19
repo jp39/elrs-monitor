@@ -1,11 +1,6 @@
-"""Bounded receive-only HackRF/replay capture and overlapped sample windows."""
-from collections import deque
+"""Bounded raw-IQ replay and overlapped sample windows. Live RX is in hackrf.py."""
 from dataclasses import dataclass
 import queue
-import shutil
-import signal
-import subprocess
-import sys
 import threading
 import time
 
@@ -64,55 +59,27 @@ class WindowAssembler:
 
 
 class Source:
-    """Drain HackRF independently; bounded queue drops oldest blocks if behind."""
-    def __init__(self, args, on_radio_message=None):
+    """Read fixed-center legacy IQ files; live reception uses NativeSource."""
+    def __init__(self, args):
         self.args = args
-        self.on_radio_message = on_radio_message
         self.queue = queue.Queue(maxsize=6)
         self.stop = threading.Event()
-        self.child = None
         self.stream = None
         self.error = None
         self.blocks = 0
         self.samples = 0
         self.dropped_blocks = 0
         self.dropped_samples = 0
-        self.radio_messages = deque(maxlen=16)
         self.thread = None
-        self.radio_thread = None
         self.last_read = time.monotonic()
 
     def start(self):
-        if self.args.replay:
-            self.stream = self.args.replay.open('rb')
-        else:
-            executable = shutil.which('hackrf_transfer')
-            if executable is None:
-                raise ValueError('hackrf_transfer not found; install the HackRF utilities')
-            # Deliberately no TX options. RF amp and antenna-port bias power off.
-            command = [executable, '-r', '-', '-f', '2440000000', '-s', str(FS),
-                       '-a', '0', '-p', '0', '-l', str(self.args.lna),
-                       '-g', str(self.args.vga)]
-            if self.args.serial:
-                command += ['-d', self.args.serial]
-            if self.args.seconds is not None:
-                command += ['-n', str(int(self.args.seconds*FS))]
-            self.child = subprocess.Popen(command, stdout=subprocess.PIPE,
-                                          stderr=subprocess.PIPE, bufsize=0,
-                                          start_new_session=True)
-            self.stream = self.child.stdout
-            self.radio_thread = threading.Thread(target=self._drain_stderr, daemon=True)
-            self.radio_thread.start()
-        self.thread = threading.Thread(target=self._read, daemon=True)
+        if not self.args.replay:
+            raise ValueError('Raw Source is replay-only; live capture uses libhackrf hop following')
+        self.stream = self.args.replay.open('rb')
+        self.thread = threading.Thread(target=self._read,daemon=True)
         self.thread.start()
         return self
-
-    def _drain_stderr(self):
-        for raw in iter(self.child.stderr.readline, b''):
-            message = raw.decode(errors='replace').rstrip()
-            self.radio_messages.append(message)
-            if self.on_radio_message is not None:
-                self.on_radio_message(message)
 
     def _put(self, item, drop):
         while not self.stop.is_set():
@@ -165,22 +132,7 @@ class Source:
 
     def close(self):
         self.stop.set()
-        if self.child is not None and self.child.poll() is None:
-            try:
-                self.child.send_signal(signal.SIGINT)
-            except ProcessLookupError:
-                pass
-            try:
-                self.child.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                self.child.kill()
-                self.child.wait()
         if self.thread is not None:
             self.thread.join(timeout=2)
-        if self.radio_thread is not None:
-            self.radio_thread.join(timeout=2)
         if self.stream is not None:
             self.stream.close()
-        if self.child is not None:
-            self.child.stderr.close()
-

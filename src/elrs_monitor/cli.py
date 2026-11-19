@@ -53,6 +53,9 @@ class TextObserver:
             c = status['counters']
             gap = status.get('last_rc_gap_seconds')
             gaps = '--' if gap is None else f"{gap:.3f}/{status.get('max_rc_gap_seconds',gap):.3f}s"
+            if status.get('capture_mode')=='hop-following' and getattr(self,'radio_diagnostics',False):
+                print(f"radio: tunes={c.get('retunes',0)} max_control={status['retune_max_seconds']*1000:.3f}ms "
+                      f"excluded={status.get('retune_discarded_seconds',0):.3f}s",file=sys.stderr,flush=True)
             print(f"status: phase={status.get('phase','monitoring')} sync={'locked' if status['locked'] else 'searching'} "
                   f"PHY={c.get('phy_candidates',0)} SYNC={c.get('sync',0)} RC={c.get('rc',0)} DATA={c.get('data',0)} "
                   f"reject(CRC/FEC/ID/mode)={c.get('crc_failures',0)}/{c.get('fec_failures',0)}/"
@@ -121,7 +124,10 @@ The learned UID stays in memory across IQ gaps; no settings are saved automatica
 Only one binding transmitter should be active. No receiver is required.
 
 For normal monitoring, rate/mode/Model Match must match the transmitter.
-Fixed 2440MHz / 10Msps partial hop-band capture; no TX or normal-traffic UID discovery.
+Live: sync-channel acquisition then automatic receive-only FHSS following at 10Msps.
+Retune/settling gaps can miss packets, especially at faster rates. No full-rate guarantee.
+Loss of hop lock returns to sync acquisition; learned identity remains in memory.
+Replay: legacy fixed-2440MHz raw IQ; it cannot reproduce live retuning timing.
 Binding phrases are identity seeds, not secrets or encryption/authentication keys.
 Startup shows the supplied phrase, full base UID, and Model Match-adjusted sync bytes.
 The TUI keeps the base UID visible; startup/status text goes to stderr, not JSON stdout.
@@ -155,7 +161,7 @@ TUI keys: q/Esc quit; Space pause; r reset min/max; arrows/PageUp/PageDown scrol
     display.add_argument('--jsonl',type=Path,metavar='PATH',
                          help='Create a new owner-only JSONL frame log; never overwrite (default: no log)')
     display.add_argument('--radio-diagnostics',action='store_true',
-                         help='Show HackRF diagnostics, in TUI events or stderr (default: off)')
+                         help='Show additional live retune timing diagnostics (default: off)')
     display.add_argument('--stale-after',type=float,default=1.0,metavar='SECONDS',
                          help='Positive TUI stale-sample age threshold (default: 1 second)')
     capture = ap.add_argument_group('capture and replay')
@@ -168,7 +174,7 @@ TUI keys: q/Esc quit; Space pause; r reset min/max; arrows/PageUp/PageDown scrol
     capture.add_argument('--workers',type=int,default=2,metavar='N',
                          help='Parallel DSP workers, 1..8 (default: 2)')
     capture.add_argument('--offset',type=int,nargs='+',default=None,metavar='HZ',
-                         help='Unique offsets: -3600000..4400000 in 1000000Hz steps (default: all nine); discovery requires 400000')
+                         help='Replay only: fixed-center channel offsets (default: all nine); live follows FHSS automatically')
     radio = ap.add_argument_group('HackRF receive settings (live capture only)')
     radio.add_argument('--lna',type=int,choices=range(0,41,8),default=16,metavar='DB',
                        help='RX LNA gain, 0..40 dB in steps of 8 (default: 16)')
@@ -176,6 +182,8 @@ TUI keys: q/Esc quit; Space pause; r reset min/max; arrows/PageUp/PageDown scrol
                        help='RX VGA gain, 0..62 dB in steps of 2 (default: 16); RF amp and antenna bias always off')
     radio.add_argument('--serial',metavar='SERIAL',help='Select HackRF serial number (default: first available device)')
     args = ap.parse_args(argv)
+    if args.offset is not None and not args.replay:
+        ap.error('--offset applies only to fixed-center --replay; live capture follows FHSS')
     if args.offset is None:
         args.offset = list(DEFAULT_OFFSETS)
     if args.discover_binding and 400000 not in args.offset:
@@ -212,7 +220,9 @@ def main(argv=None):
         if args.tui:
             from .tui import run_tui
             return run_tui(args,config)
-        run_receiver(args,config,TextObserver(args.format == 'json'))
+        observer = TextObserver(args.format == 'json')
+        observer.radio_diagnostics = args.radio_diagnostics
+        run_receiver(args,config,observer)
         return 0
     except BrokenPipeError:
         return 0

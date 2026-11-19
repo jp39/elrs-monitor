@@ -50,6 +50,9 @@ def run_receiver(args, config, observer, stop=None):
     stopping/reopening IQ capture or resetting its sample clock. Only a normal
     matching sync can unlock RC parsing. Logging/display survive the transition.
     """
+    if not args.replay:
+        from .live import run_live
+        return run_live(args,config,observer,stop)
     stop = stop if stop is not None else threading.Event()
     discovery_requested = config.get('discover_binding',False)
     decoder = BindingDiscoveryDecoder(config) if discovery_requested else LiveDecoder(config)
@@ -61,9 +64,7 @@ def run_receiver(args, config, observer, stop=None):
     def acquiring():
         return discovery_requested and learned_uid is None
 
-    source = Source(args, on_radio_message=(
-        lambda message: observer.on_message('hackrf: '+message)
-    ) if args.radio_diagnostics else None)
+    source = Source(args)
     # The fixed maximum guard also covers old queued jobs at a rate change.
     airtime = max(target.airtime,decoder.profile.airtime)
     guard = max(FS//100,math.ceil((airtime+.001)*FS/400)*400)
@@ -211,11 +212,6 @@ def run_receiver(args, config, observer, stop=None):
         if acquiring() and not stop.is_set():
             raise RuntimeError('No UID discovered before EOF/time limit. Put the transmitter into '
                                'BIND mode, not just normal 50Hz operation.')
-        if source.child is not None and not stop.is_set():
-            returncode = source.child.wait(timeout=5)
-            if returncode:
-                tail = '\n'.join(source.radio_messages)
-                raise RuntimeError(f'hackrf_transfer exited with status {returncode}\n{tail}')
     finally:
         source.close()
         if log is not None:

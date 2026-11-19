@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 from scipy.signal import resample_poly
@@ -290,31 +290,26 @@ class ReplayTests(unittest.TestCase):
             self.assertTrue(all(f['packet_type']==1 and 'rc' not in f for f in frames))
             self.assertLess(frames[-1]['time_s']-frames[0]['time_s'],.081)
 
-    def test_live_discovery_keeps_child_running_and_uid_survives_gap(self):
+    def test_replay_discovery_uid_survives_gap(self):
         from elrs_monitor.capture import Block
         from elrs_monitor.engine import run_receiver
         from test_engine_cli import Observer
-        child=MagicMock();child.poll.return_value=0
-        child.wait.return_value=0
         sources=[]
         def start(source):
             sources.append(source)
-            source.child=child
             source.samples=4_000_000
             for core in (0,1_000_000,3_000_000):
                 source.queue.put(Block(core,bytes(2_000_000)))
             source.queue.put(None)
             return source
         frames=[binding_observation(t) for t in (.02,.06,.10)]
-        observer=Observer();args=parse_args(['--discover-binding','--rate','50'])
+        observer=Observer();args=parse_args(['--discover-binding','--rate','50','--replay','/mock.iq'])
         def process(window,offsets,profile):
             self.assertFalse(sources[0].stop.is_set(),'Capture must not stop at UID discovery')
             return frames if window.core_start==0 else []
         with patch('elrs_monitor.engine.Source.start',new=start), \
              patch('elrs_monitor.engine.process_window',side_effect=process):
             run_receiver(args,DISCOVERY,observer)
-        child.send_signal.assert_not_called()
-        child.wait.assert_called_once()
         self.assertEqual(len(observer.frames),3)
         status=observer.statuses[-1]
         self.assertEqual(status['discovered_uid'],'00:00:12:34:56:78')

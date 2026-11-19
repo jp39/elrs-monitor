@@ -1,4 +1,72 @@
-# Validation — 0.5.0
+# Validation — 0.6.0
+
+## Current live hop-following implementation
+
+The pre-change baseline is commit **325e2b7**, tag **pre-hop-following-0.5.0**.
+Live capture now uses receive-only libhackrf callbacks and automatically follows
+the FHSS sequence after a validated normal sync. The old fixed-band live
+subprocess implementation is removed, not selectable by an opt-in/opt-out flag.
+Fixed-center raw recording replay remains supported.
+
+**120 automated tests pass**, including all prior protocol/replay regressions
+and new checks for:
+
+- All 240 sequence entries against independently compiled ExpressLRS 4.1.0
+  `FHSS.cpp` and `random.cpp` (commit a9d4a9c), with OTA-v4 UID seeding.
+  Platform/logging stubs do not replace the sequence/RNG implementations.
+- Independent 256-slot nonce and 240-hop sequence wrapping, each profile's
+  hop interval, TXdone/idle-guard tuning timing, and late-deadline skipping.
+- CRC, normal identity/mode sync gating, strict timing grid and predicted RF
+  channel checks; validated uplinks refresh phase without inventing syncs.
+- Loss-of-lock return to acquisition, scheduler errors and cancellation,
+  native RX-only settings, partial-open cleanup and idempotent close.
+- Bounded callback queues; malformed/NULL/odd-length transfer rejection.
+  Retune epochs have explicit excluded intervals and cannot be stitched.
+- Timing recalibration after suspected discontinuity, retaining sample counter.
+- Binding-to-normal live handover on one source/log across frequency epochs;
+  missing sync never unlocks channels. Existing log paths are not overwritten.
+- Synthetic frequency-changing 10Msps IQ through the actual live DSP/decoder,
+  including intentionally lost first slots, and a >80%-occupied 250Hz waveform.
+- Following/reacquisition labels and separate queue-loss/retune-exclusion metrics.
+
+### Hardware transport checks (not packet-recall proof)
+
+An actual HackRF RX stream completed **79 live frequency changes** at roughly
+16ms dwell, with no callback errors or application-queue drops. The maximum
+control call was **0.515ms**; excluded IQ totaled **0.341s**, including the
+conservative 4ms quarantine per retune. Only RX APIs were used; RF amp and
+antenna bias were off. This exercised transport/tuning, not ELRS packet yield.
+
+A separate ten-second 50Hz/Wide/Model Match ID 0 live monitor run completed
+cleanly, but detected no ELRS PHY candidates on the acquisition channel.
+**End-to-end live hop-following reception with an active transmitter remains
+unverified.** In particular, neither full-rate reception nor new live latency
+figures are claimed. Faster PHYs may lose several slots in retune exclusions.
+
+### Physical fixture and replay checks
+
+All 144 previously validated normal 50Hz packet timestamps/bytes align with
+the firmware hop schedule modulo the 10MHz sampling alias. Of the old FFT
+carrier labels, 91 match the predicted RF channel directly; 53 differ by exactly
++/-10MHz, consistent with RF aliases in the original partial-band capture.
+The new follower checks the actual predicted nominal carrier instead of
+treating an aliased fixed-band label as that carrier. A small physical fixture
+is included; the 240-entry C++ golden fixture independently validates the port.
+
+The high-duty-cycle floor estimate is now the lower 5%, rather than 20%.
+A followed 250Hz carrier exceeds 80% occupancy, where a 20th-percentile floor
+can mistake signal for noise. Regression on the physical fixed-band captures:
+
+- **50Hz:** 149 valid frames (6 sync, 143 RC), retaining all previous 144.
+- **250Hz:** all 196 valid frames retained (18 sync, 89 RC, 89 data).
+
+These recordings cannot validate retuning, host scheduling, or full-band recall.
+Replay remains fixed-center and uses backpressure unless paced.
+
+## Historical fixed-band validation (through 0.5.0)
+
+The following measurements and older test counts describe the saved baseline,
+not the new live backend.
 
 The project is independent of the original analysis scripts/reference checkouts.
 No IQ recording or local settings file is bundled in distributions.

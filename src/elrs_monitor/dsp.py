@@ -43,10 +43,10 @@ def fft_channels(raw, offsets):
 def find_bursts_fast(y, profile=DEFAULT):
     # O(n) moving windows, rather than convolving twice with 64 taps.
     power = uniform_filter1d(abs(y)**2, 64, mode='constant')
-    # Binding stays on the sync channel: 50Hz SF8 packets occupy >50% of
-    # each window. A median then estimates signal power, hiding all bursts.
-    # The lower quintile still samples the idle gaps between these packets.
-    floor = float(np.percentile(power,20))
+    # A followed 250Hz hop is >80% occupied. Even the lower quintile then
+    # estimates signal power rather than noise. Use the lower 5% to retain
+    # the short inter-packet idle gaps (also handles dense 50Hz binding).
+    floor = float(np.percentile(power,5))
     if floor <= 1e-20:
         return []
     mask = power > floor*6

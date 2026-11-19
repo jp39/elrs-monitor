@@ -42,7 +42,11 @@ def render_lines(view,width,height,paused=False,scroll=0):
             phase, role = 'LISTENING FOR BIND', 'warning'
         else:
             waiting = 'WAITING NORMAL SYNC' if status.get('discovered_uid') else 'SEARCHING SYNC'
-            phase, role = ('SYNC LOCKED', 'good') if status['locked'] else (waiting, 'warning')
+            if status.get('capture_mode')=='hop-following':
+                phase,role = ('HOP FOLLOWING','good') if status['locked'] else (
+                    'REACQUIRING SYNC' if status.get('phase')=='reacquiring' else waiting,'warning')
+            else:
+                phase, role = ('SYNC LOCKED', 'good') if status['locked'] else (waiting, 'warning')
     last = '--' if view['last_channel_hz'] is None else f"{view['last_channel_hz']/1e6:.4f} MHz"
     cfo = '--' if view['cfo_hz'] is None else f"{view['cfo_hz']:+.0f} Hz"
     title = 'ELRS MONITOR | RECEIVE ONLY'
@@ -124,7 +128,12 @@ def render_lines(view,width,height,paused=False,scroll=0):
                           f"{bar(c['normalized'])} {limits:>12} {age:>6} {state}", role))
     lines += [Line(f"CH {scroll+1}-{scroll+visible}/{len(view['channels'])} | decoded RC gap last/max {gaps} "
                        f"| raw OTA; STALE>{view['stale_after']:.1f}s",'dim'),
-              Line(f"PARTIAL BAND: {view['channel_count']} hop channels. Last seen values are NOT failsafe/live control.", 'warning')]
+              Line((f"FHSS 80 channels | retunes {counts.get('retunes',0)} | excluded "
+                    f"{status.get('retune_discarded_seconds',0):.3f}s"
+                    +(f" | ctrl max {status.get('retune_max_seconds',0)*1000:.2f}ms"
+                      if status.get('radio_diagnostics') else ' | gaps possible')
+                    if status.get('capture_mode')=='hop-following' else
+                    f"PARTIAL BAND: {view['channel_count']} hop channels. Last seen values are NOT failsafe/live control."), 'warning')]
     available = max(0, height-len(lines)-1)
     for level, message in view['events'][-available:] if available else []:
         lines.append(Line(message, 'error' if level == 'error' else ('warning' if level == 'warning' else 'dim')))
@@ -169,6 +178,7 @@ def run_tui(args, config):
         finally:
             state.complete(error)
 
+    state.status['capture_mode'] = 'fixed-replay' if args.replay else 'hop-following'
     thread = threading.Thread(target=worker, name='elrs-receiver')
 
     def session(screen):

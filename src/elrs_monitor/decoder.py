@@ -97,6 +97,9 @@ class LiveDecoder:
             self.counts['data'] += 1
         return r
 
+    def _accept_sync(self, frame):
+        return True
+
     def feed(self, b):
         self.counts['phy_candidates'] += 1
         self.advance(b['time_s'])
@@ -109,6 +112,9 @@ class LiveDecoder:
                  packet_hex=p.hex(), packet_type=p[0] & 3,
                  fec_corrected_bits=corrections, cfo_hz=b.get('cfo_hz'),
                  crc_ok=False)
+        for key in ('rx_center_hz','capture_epoch'):
+            if key in b:
+                r[key] = b[key]
         if r['packet_type'] == 2:
             if not validate_crc(p, self.initializer):
                 self.counts['crc_failures'] += 1
@@ -126,6 +132,8 @@ class LiveDecoder:
                 self.counts['unsupported_sync'] += 1
                 return []
             r.update(sync=sync, crc_ok=True, identity_match=True, status='validated_sync')
+            if not self._accept_sync(r):
+                return []
             self.anchor = r
             self.counts['sync'] += 1
             out = []

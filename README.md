@@ -7,13 +7,16 @@ TUI, text/JSON output, frame logging, and deterministic IQ replay.
 LoRa profiles and all corresponding switch modes are configurable. **250Hz /
 Hybrid and 50Hz / Wide are validated on physical RF recordings. Other PHY
 profiles remain experimental and synthetic-tested.**
-The receiver captures a fixed slice of the hopping band, not a complete control
-stream. FLRC/GFSK modes such as D250 and F1000 are deliberately excluded.
+**Live capture now follows the transmitter's 80-channel hopping sequence.**
+It acquires a normal sync on 2440.4MHz, then retunes automatically. This is
+experimental: retune gaps, OS timing, and RF conditions can still miss packets;
+it is not a guaranteed complete control stream. Legacy raw IQ replay remains
+fixed-band. FLRC/GFSK modes such as D250 and F1000 are deliberately excluded.
 
 ## Install
 
 Requires Linux/Unix, Python **3.11+**, NumPy, SciPy, and (for RF reception)
-`hackrf_transfer`. The TUI uses Python's standard `curses` module; there is no
+the **libhackrf** host library (loaded directly using ctypes). The TUI uses Python's standard `curses` module; there is no
 GUI/TUI framework dependency. Some distributions package curses separately.
 
 ```bash
@@ -63,7 +66,8 @@ Other flags are optional:
 | Acquisition duration | Until stopped/EOF; `--seconds` limits the entire session |
 | Replay speed | As fast as possible; use `--pace` for real time |
 | JSONL logging / radio diagnostics | Off |
-| Processed hop channels | All nine; binding acquisition always includes the sync channel |
+| Live acquisition / monitoring | Sync channel, then automatic FHSS following; no opt-in flag |
+| Legacy replay channels | All nine in the fixed recording band; `--offset` is replay-only |
 
 Minimal command for a 250Hz/Hybrid transmitter with Model Match off:
 
@@ -71,8 +75,8 @@ Minimal command for a 250Hz/Hybrid transmitter with Model Match off:
 .venv/bin/elrs-monitor --bind-phrase 'YOUR PHRASE' --tui
 ```
 
-For your current transmitter with Model Match **on, ID 11**, supply those flags
-explicitly; the old file no longer provides them:
+For the previously validated 250Hz/Hybrid setting with Model Match **on, ID 11**,
+supply those flags explicitly; the old file no longer provides them:
 
 ```bash
 .venv/bin/elrs-monitor --bind-phrase 'YOUR PHRASE' --tui \
@@ -191,9 +195,9 @@ off, ID 0; normal rate/mode discovery is not implemented. Binding acquisition
 always uses 50Hz on 2440.4MHz independently of those settings. Incompatible
 normal rate/mode combinations are rejected before capture starts.
 
-Do not supply a phrase or UID alongside `--discover-binding`. The default
-channel selection is all nine; a custom `--offset` selection must include
-`400000`. Replay uses the same signed-int8 10Msps/2440MHz format and supports
+Do not supply a phrase or UID alongside `--discover-binding`. Live acquisition processes the sync channel only, then follows the learned
+link. For replay the default channel selection is all nine; a custom `--offset`
+selection must include `400000` during discovery. Replay uses the same signed-int8 10Msps/2440MHz format and supports
 handover even when binding and normal packets use different PHY profiles.
 
 **Selecting ordinary 50Hz operation is not entering Bind mode.** Normal
@@ -267,6 +271,9 @@ The dashboard shows:
   occupancy, and application-buffer drops.
 - **Decoded RC gap last/max**: spacing between validated RC packets on the IQ
   sample clock, not repaint timing or a count of all missed RF packets.
+- **HOP FOLLOWING** / **REACQUIRING SYNC** phases, retune count, and excluded IQ
+  duration. `--radio-diagnostics` adds maximum control-call timing. Known
+  identities remain displayed during reacquisition.
 
 **Controls**
 
@@ -297,14 +304,21 @@ input stalls and freezes at EOF. The explicit STOPPED/EOF banner distinguishes
 retained values from a live link. Fast unpaced replay may make values appear
 stale due to read-ahead; use `--pace` for a realistic display.
 
-### Why 50Hz does not mean a 20ms dashboard control stream
+### Update cadence and latency
 
-The transmitter hops across 80 channels, but this fixed-band capture covers
-only nine. It misses packets outside that slice, and some slots are used for
-sync/data/telemetry rather than RC. The 20-second physical 50Hz/Wide recording
-contains 138 decoded RC packets (6.9/s), with sample-time RC gaps from 20ms to
-960ms. In the binding-to-monitoring capture, the longest decoded RC gap is
-1.02s. These are measured gaps, not guarantees for other conditions.
+Hop following replaces the old fixed-band live receiver. It aims to receive
+across the full sequence, not all 80 carriers simultaneously. Some slots carry
+sync/data/telemetry, and retune uncertainty can still exclude RC packets.
+At 50Hz the scheduler uses the idle time after the old hop's last packet to
+retune before the next packet. Faster profiles have much less idle time, so
+several slots per hop may be lost. Full-rate live reception is **not yet RF
+validated**. Short USB-sized cores replace the old 100ms live cores.
+
+For comparison, the old fixed-band 20-second 50Hz/Wide replay yielded 138 RC
+packets (6.9/s), with gaps up to 960ms. The new high-duty-cycle detector retains
+all of those and finds five more (143 RC). These remain fixed-band recordings;
+they do not measure the new follower's live reception rate. Old observations
+also include some RF carriers aliased into the 10Msps band.
 
 The TUI repaints every 100ms, and the block/overlap pipeline adds latency.
 Use `DSP behind`, queue occupancy and `app drops` to identify software backlog;
@@ -314,8 +328,7 @@ not rule out demodulation misses. Observed 2.5-second delays need live metrics;
 we cannot attribute every delay to hopping from these recordings alone.
 Unpaced replay uses input backpressure and can read ahead; zero replay drops
 alone do not prove there are no live overruns. Use live or paced-replay metrics
-to assess real-time backlog. Faster repainting cannot recover packets outside
-the captured band.
+to assess real-time backlog. Faster repainting cannot recover excluded or missed RF packets.
 
 ## Replay the existing recording
 
@@ -335,7 +348,7 @@ with the project. Remove `--pace` to benchmark faster than real-time.
 .venv/bin/elrs-monitor --bind-phrase 'YOUR PHRASE' --format json
 .venv/bin/elrs-monitor --bind-phrase 'YOUR PHRASE' --tui --jsonl frames.jsonl
 .venv/bin/elrs-monitor --bind-phrase 'YOUR PHRASE' --seconds 10 --radio-diagnostics
-# Add --model-match on --model-id 11 for your current transmitter.
+# Supply rate, switch mode, and Model Match flags for the transmitter in use.
 ```
 
 Normal monitoring emits only known-link CRC-valid frames; binding discovery
@@ -349,8 +362,8 @@ and derived UID are displayed normally; neither is a cryptographic secret.
 Useful options:
 
 - `--workers 3`: more parallel DSP on a busy computer (default 2).
-- `--offset -600000 400000 1400000`: process just three neighboring channels,
-  retaining the designated sync channel; useful if CPU load is too high.
+- `--offset -600000 400000 1400000`: **replay only**, process three neighboring
+  channels. Live reception follows the sequence; no fixed-band live mode remains.
 - `--stale-after 2`: change the TUI stale-sample age threshold.
 - `--lna 16 --vga 16`: conservative default RX gains; RF amplifier and antenna
   bias power are always disabled by the program.
@@ -358,10 +371,15 @@ Useful options:
 
 ## How it works and what it cannot do
 
-1. `hackrf_transfer` supplies IQ to a bounded input queue, or replay supplies
-   samples from a file. The program never passes TX flags to the radio utility.
-2. Overlapped 100 ms cores are FFT-channelized onto nine channels centered at
-   2436.4–2444.4 MHz within the fixed 2440 MHz / 10 Msps capture.
+1. Live RX uses libhackrf at 10Msps; only receive APIs are bound. RF amplifier
+   and antenna bias are explicitly off. The RX callback drains continuously into
+   a bounded queue and keeps an absolute sample counter.
+2. Acquisition listens on 2440.4MHz. A UID-derived 240-entry sequence (three
+   permutations of 80 channels) and a normal sync establish hop index and nonce.
+   An independent timing thread retunes the receiver; short overlapped USB-sized
+   cores are channelized at +400kHz from each tune center to avoid DC. Different
+   frequency epochs are never stitched together. Replay alone retains 100ms
+   fixed-band cores and its nine-channel FFT bank.
 3. The selected SF5–8 chirps, preamble, sync word, timing, and carrier offset
    are recovered. Symbol lengths, delimiter extras, and packet airtime are
    profile-specific; SF7+ first-block protection is handled separately.
@@ -372,21 +390,30 @@ Useful options:
    checks, plus rate/switch/protocol checks.
 6. Non-sync nonces are inferred from validated sync anchors and the firmware's
    exact interval (including 6666us and 3003us), not a rounded Hz division.
-   CRC-valid uplink packets yield explicit per-channel updates.
+   CRC-valid uplink packets yield explicit per-channel updates. In live mode,
+   the predicted hop frequency must also match. Validated uplinks refresh phase
+   without fabricating additional sync packets.
 
-Expected processing/display latency is a few hundred milliseconds; initial
-acquisition can wait longer for sync. The six-block raw queue bounds backlog
-at about 600 ms. When it overflows, old blocks are discarded, the gap is reported,
-a boundary window is dropped, and sync is reset. Nonce state expires after at
-least two seconds; slower profiles allow 1.5 times the expected 80-channel hop
-cycle so their longer sync gaps do not prematurely discard lock. Overlap grows
-for packets longer than 10ms (50Hz). These limits are visible rather than
-displaying old values as live controls.
+The tuning scheduler uses packet airtime and the firmware's TXdone hop timing.
+It leaves 500us after the old payload before an early tune when the profile's
+idle guard permits it (about 8.7ms before the next 50Hz hop's first packet).
+IQ during the tuning call plus a conservative 4ms uncertainty/settling interval
+is excluded and reported separately from queue loss. These host-time boundaries
+are estimates: HackRF does not provide hardware sample timestamps here.
+
+After at least 500ms without validated packets (or six hop periods, whichever
+is longer), live reception returns to sync acquisition. Queue overflows also
+reset tracking. The known UID remains in memory. The host/sample timing estimate
+is recalibrated after suspected loss; no exact hardware/USB loss count is claimed.
+Six queued USB-sized segments bound the raw live queue, rather than the former
+six 100ms blocks; pending DSP work adds latency too. UI refresh remains 100ms.
+No live latency guarantee is made before testing with an active transmitter.
 
 **Limitations:**
 
-- Partial hopping-band coverage: sparse updates, missing packets, no universal
-  reception or complete control stream. No fast hardware hop following yet.
+- Experimental host-timed hopping, not simultaneous wideband reception. Retune
+  exclusions, scheduling misses, and RF interference can lose packets. No
+  universal reception or complete control stream is promised.
 - `app drops` counts application-queue loss, **not every possible USB/firmware
   loss**. Underlying sample discontinuity can require reacquisition.
 - CRC is error detection, not cryptographic authentication. The binding phrase
@@ -398,6 +425,21 @@ displaying old values as live controls.
   control. The dashboard is an instrument, not a flight-control receiver.
 - Use low transmitter power and antenna separation. Never directly connect a
   transmitter RF output to the HackRF without appropriate attenuation.
+
+## Roll back to the pre-hopping implementation
+
+The working 0.5.0 source/tests/docs are committed as **`325e2b7`**, tagged
+**`pre-hop-following-0.5.0`**. The fixed-band live implementation is no longer
+a selectable runtime mode; use Git to restore it without deleting the new work:
+
+```bash
+git switch -c rollback-fixed-band pre-hop-following-0.5.0
+.venv/bin/python -m pip install --no-deps --no-build-isolation -e .
+```
+
+Restart any running monitor after switching versions. The feature remains on
+`master`; `git switch master` returns to it when the working tree permits.
+Captures and the ignored old settings file are not changed by these commits.
 
 ## Development and tests
 
@@ -413,8 +455,12 @@ state tracking, and terminal presentation:
 ```text
 src/elrs_monitor/
   cli.py          argument parsing, text/JSON presentation
-  capture.py      HackRF/replay source, bounded queue, overlap windows
-  engine.py       presentation-independent streaming pipeline
+  capture.py      legacy raw replay, bounded queue, overlap windows
+  engine.py       entry point and fixed-recording replay pipeline
+  hackrf.py       receive-only native transport and retune epoch boundaries
+  fhss.py         firmware-compatible sequence and unwrapped hop/slot clock
+  follow.py       validated phase tracking and independent tuning scheduler
+  live.py         default live acquisition/following/reacquisition pipeline
   profiles.py     LoRa geometry, intervals, mode compatibility
   dsp.py, phy.py  profile-driven channelization and symbol recovery
   protocol.py     FEC, dewhitening, CRC, packet parsing

@@ -129,6 +129,17 @@ class ModelTests(unittest.TestCase):
             self.assertIn('sync 5f:ec',header)
             self.assertIn("phrase 'julian'",header)
 
+    def test_hop_following_and_reacquisition_replace_partial_band_live_label(self):
+        self.status(capture_mode='hop-following',phase='following',locked=True,
+                    counters=dict(retunes=12),retune_discarded_seconds=.05)
+        text='\n'.join(line.text for line in render_lines(self.state.snapshot(),100,24))
+        self.assertIn('HOP FOLLOWING',text)
+        self.assertIn('FHSS 80 channels | retunes 12',text)
+        self.assertNotIn('PARTIAL BAND',text)
+        self.status(capture_mode='hop-following',phase='reacquiring',locked=False)
+        text='\n'.join(line.text for line in render_lines(self.state.snapshot(),100,24))
+        self.assertIn('REACQUIRING SYNC',text)
+
     def test_dsp_backlog_and_rc_gaps_are_separate_metrics(self):
         self.status(processing_lag_seconds=.25,last_rc_gap_seconds=.02,max_rc_gap_seconds=.96)
         text='\n'.join(line.text for line in render_lines(self.state.snapshot(),100,24))
