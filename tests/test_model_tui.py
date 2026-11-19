@@ -96,7 +96,7 @@ class ModelTests(unittest.TestCase):
         self.assertIn('ARMED',text)
         self.status(source_seconds=3,locked=True)
         rows=render_lines(self.state.snapshot(),100,24)
-        armed_row=next(line.text for line in rows if line.text.startswith(' 05'))
+        armed_row=next(line.text for line in rows if line.text.lstrip('│').startswith(' 05'))
         self.assertIn('STALE',armed_row)
         self.assertNotIn('ARMED',armed_row)
 

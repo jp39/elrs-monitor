@@ -253,6 +253,14 @@ cd ~/elrs-monitor
   --model-match on --model-id 11
 ```
 
+The dashboard uses a dark cyan/violet instrument-panel layout, smooth
+fractional-block channel meters, half-scale guides for analog channels, and
+an explicit link-state badge. At 116+ columns, a separate telemetry/events
+sidebar appears; compact terminals retain the full channel table with scrolling.
+UTF-8/256-color terminals get the full theme; ASCII, eight-color and monochrome
+fallbacks require no extra dependencies. Pausing marks retained readings HELD,
+not LIVE. No receiver/DSP behavior is changed by the presentation layer.
+
 The dashboard shows:
 
 - Hybrid/Wide: CH1–4 raw 10-bit values, CH5/AUX1 armed flag, and separately

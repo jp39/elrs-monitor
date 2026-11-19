@@ -1,16 +1,12 @@
 """Stdlib curses frontend. All terminal calls stay on the main thread."""
-from dataclasses import dataclass
+import locale
 import threading
+
+from .dashboard import Line, render_lines, clip, cells
 
 from .engine import run_receiver
 from .decoder import identity_details
 from .model import MonitorState
-
-
-@dataclass(frozen=True)
-class Line:
-    text: str
-    role: str = 'normal'
 
 
 def bar(fraction, width=16):
@@ -20,143 +16,72 @@ def bar(fraction, width=16):
     return '['+'#'*filled+'-'*(width-filled)+']'
 
 
-def render_lines(view,width,height,paused=False,scroll=0):
-    """Pure renderer for deterministic tests and safe terminal resizing."""
-    if width < 80 or height < 22:
-        return [Line('ELRS MONITOR', 'title'),
-                Line('Terminal too small: need at least 80 columns x 22 rows.', 'warning'),
-                Line('Acquisition continues. Resize terminal, or press q to quit.')][:height]
-    status = view['status']
-    counts = status['counters']
-    behind = status.get('processing_lag_seconds',max(0,status['source_seconds']-status['processed_through_s']))
-    gap = status.get('last_rc_gap_seconds')
-    gaps = '--' if gap is None else f"{gap:.3f}/{status.get('max_rc_gap_seconds',gap):.3f}s"
-    if view['error']:
-        phase, role = 'ERROR', 'error'
-    elif view['finished'] or status['done']:
-        phase, role = 'STOPPED / EOF', 'warning'
-    elif view['input_idle'] > 1.0:
-        phase, role = 'IQ STALLED', 'warning'
+def configure_colors(curses):
+    """Cyan/violet palette, with eight-color and monochrome fallbacks."""
+    styles = dict(title=curses.A_BOLD, section=curses.A_BOLD,
+                  dim=curses.A_DIM, border=curses.A_DIM, track=curses.A_DIM,
+                  primary=curses.A_BOLD, secondary=0, number=curses.A_BOLD,
+                  good=curses.A_BOLD, warning=curses.A_BOLD, error=curses.A_BOLD,
+                  hotkey=curses.A_BOLD, panel=curses.A_BOLD,
+                  badge_good=curses.A_REVERSE|curses.A_BOLD,
+                  badge_warning=curses.A_REVERSE|curses.A_BOLD,
+                  badge_error=curses.A_REVERSE|curses.A_BOLD,
+                  badge_rx=curses.A_REVERSE|curses.A_BOLD)
+    if not curses.has_colors():
+        return styles
+    curses.start_color()
+    try:
+        curses.use_default_colors()
+    except curses.error:
+        pass
+    background = 233 if curses.COLORS >= 256 else curses.COLOR_BLACK
+    if curses.COLORS >= 256:
+        palette = dict(normal=(252,background),title=(255,background),border=(60,background),
+                       dim=(244,background),track=(238,background),primary=(81,background),
+                       secondary=(141,background),number=(255,background),good=(84,background),
+                       warning=(221,background),error=(203,background),section=(81,background),
+                       hotkey=(81,background),panel=(252,235),badge_good=(16,84),
+                       badge_warning=(16,221),badge_error=(16,203),badge_rx=(231,61))
     else:
-        if view.get('discover_binding'):
-            phase, role = 'LISTENING FOR BIND', 'warning'
-        else:
-            waiting = 'WAITING NORMAL SYNC' if status.get('discovered_uid') else 'SEARCHING SYNC'
-            if status.get('capture_mode')=='hop-following':
-                phase,role = ('HOP FOLLOWING','good') if status['locked'] else (
-                    'REACQUIRING SYNC' if status.get('phase')=='reacquiring' else waiting,'warning')
-            else:
-                phase, role = ('SYNC LOCKED', 'good') if status['locked'] else (waiting, 'warning')
-    last = '--' if view['last_channel_hz'] is None else f"{view['last_channel_hz']/1e6:.4f} MHz"
-    cfo = '--' if view['cfo_hz'] is None else f"{view['cfo_hz']:+.0f} Hz"
-    title = 'ELRS MONITOR | RECEIVE ONLY'
-    if paused:
-        title += ' | DISPLAY PAUSED'
-        title += ' (capture stopped)' if status['done'] else ' (acquisition continues)'
-    if view.get('discover_binding'):
-        binding = view.get('binding')
-        uid = status.get('discovered_uid')
-        lines = [Line(title,'title'),
-                 Line(f"{view['source_label']} | BIND DISCOVERY | 50Hz LoRa / 2440.4MHz"),
-                 Line(phase,role),
-                 Line(f"IQ {status['source_seconds']:.2f}s | DSP behind {behind:.3f}s"
-                      f" | app drops {status['application_dropped_seconds']:.3f}s"),
-                 Line(f"PHY {counts.get('phy_candidates',0)} | BIND {counts.get('binding_packets',0)}"
-                      f" | CRC/FEC rejected {counts.get('crc_failures',0)+counts.get('fec_failures',0)}"),
-                 Line(f"RF {last} CFO {cfo}"),Line(''),
-                 Line('Confirmed UID: '+uid if uid else 'No UID confirmed yet.','good' if uid else 'warning'),
-                 Line(f"Best current repetition count: {status.get('binding_confirmations',0)}/3"),
-                 Line('Last candidate: '+binding['uid'] if binding else 'No binding message received yet.'),
-                 Line('Put ONE transmitter into BIND mode after starting this listener.','title'),
-                 Line('Selecting ordinary 50Hz operation alone does NOT disclose the UID.','warning'),
-                 Line('Discovery receives only; no actual receiver or transmit handshake required.'),
-                 Line('Only four UID bytes are sent; 00:00 prefix is reconstructed, not the MAC.'),
-                 Line(f"After discovery: {view['packet_rate']} / {view['switch_mode']} / "
-                      +('MM ID '+str(view['model_id']) if view['model_match'] else 'MM off')),
-                 Line('After three repeats, monitoring continues; normal sync unlocks channels.')]
-        available = max(0,height-len(lines)-1)
-        for level,message in view['events'][-available:] if available else []:
-            lines.append(Line(message,'error' if level == 'error' else 'dim'))
-        while len(lines) < height-1:
-            lines.append(Line(''))
-        lines.append(Line('q/Esc quit | Space pause display | capture continues after UID discovery','title'))
-        return lines[:height]
-    arm = view['armed']
-    active = status['locked'] and not status['done'] and view['input_idle'] <= 1
-    arm_text = '--' if arm['value'] is None else (
-        arm['description'] if active and arm['freshness'] == 'fresh' else
-        f"{arm['freshness'] if arm['freshness'] == 'STALE' else 'HELD'}/last{arm['value']}")
-    visible = min(len(view['channels']),max(1,height-11))
-    identity = view.get('identity')
-    identity_text = 'UID --' if identity is None else (
-        f"UID {identity['uid']} | sync {identity['sync_uid']} | "
-        +(f"phrase {identity['binding_phrase']!r}" if identity['source']=='phrase' else
-          ('learned UID (00:00 prefix)' if identity['source']=='binding' else 'explicit UID')))
-    scroll = max(0,min(scroll,len(view['channels'])-visible))
-    lines = [
-        Line(title,'title'),
-        Line(f"{view['source_label']} | 2.4GHz {view['packet_rate']} {view['switch_mode']} | "
-             f"Model Match {'ON ID '+str(view['model_id']) if view['model_match'] else 'OFF'}"),
-        Line(identity_text),
-        Line(f"{phase} | SYNC {counts.get('sync',0)}  RC {counts.get('rc',0)}  DATA {counts.get('data',0)}"
-             f" | reject CRC/FEC/ID/mode {counts.get('crc_failures',0)}/{counts.get('fec_failures',0)}/"
-             f"{counts.get('identity_failures',0)}/{counts.get('unsupported_sync',0)+counts.get('mode_failures',0)}",role),
-        Line(f"IQ {status['source_seconds']:.2f}s | DSP behind {behind:.3f}s"
-             f" | queue {status['queue_depth']}/{status['queue_capacity']}"
-             f" | app drops {status['application_dropped_seconds']:.3f}s",
-             'warning' if status['application_dropped_seconds'] else 'normal'),
-        Line(f"RF {last} CFO {cfo} | RC/s {view['output_rc_per_s']} | Arm {arm_text}"),
-        Line(' CH   Function      Raw/max   Level                Seen min..max    Age State', 'title'),
-    ]
-    for c in view['channels'][scroll:scroll+visible]:
-        value = '--' if c['value'] is None else str(c['value'])
-        extent = (1 << c['bits'])-1
-        limits = '--..--' if c['minimum'] is None else f"{c['minimum']}..{c['maximum']}"
-        age = '--' if c['age'] is None else (f"{c['age']:.1f}s" if c['age'] < 100 else '>99s')
-        state = c['freshness']
-        if state == 'fresh' and (not status['locked'] or status['done'] or view['input_idle'] > 1):
-            state = 'HELD'
-        role = 'dim' if state == 'UNSEEN' else ('warning' if state in ('STALE','HELD') else 'normal')
-        if c['kind'] == 'armed' and c['value'] is not None:
-            fresh = state == 'fresh'
-            state = c['description'] if fresh else state
-            if c['value'] and fresh:
-                role = 'error'
-        elif c['kind'] == 'switch' and c['bits'] == 3 and c['value'] is not None and c['value'] >= 6:
-            value += 'M'
-        lines.append(Line(f" {c['number']:02d}   {c['label']:<12} {value:>4}/{extent:<4} "
-                          f"{bar(c['normalized'])} {limits:>12} {age:>6} {state}", role))
-    lines += [Line(f"CH {scroll+1}-{scroll+visible}/{len(view['channels'])} | decoded RC gap last/max {gaps} "
-                       f"| raw OTA; STALE>{view['stale_after']:.1f}s",'dim'),
-              Line((f"FHSS 80 channels | retunes {counts.get('retunes',0)} | excluded "
-                    f"{status.get('retune_discarded_seconds',0):.3f}s"
-                    +(f" | ctrl max {status.get('retune_max_seconds',0)*1000:.2f}ms"
-                      if status.get('radio_diagnostics') else
-                      f" | T/H {counts.get('off_grid',0)}/{counts.get('hop_frequency_failures',0)}")
-                    if status.get('capture_mode')=='hop-following' else
-                    f"PARTIAL BAND: {view['channel_count']} hop channels. Last seen values are NOT failsafe/live control."), 'warning')]
-    available = max(0, height-len(lines)-1)
-    for level, message in view['events'][-available:] if available else []:
-        lines.append(Line(message, 'error' if level == 'error' else ('warning' if level == 'warning' else 'dim')))
-    while len(lines) < height-1:
-        lines.append(Line(''))
-    lines.append(Line('q/Esc quit | Up/Down/Pg scroll | Space pause | r reset min/max','title'))
-    return lines[:height]
+        palette = {name:(foreground,background) for name,foreground in dict(
+            normal=curses.COLOR_WHITE,title=curses.COLOR_WHITE,border=curses.COLOR_CYAN,
+            dim=curses.COLOR_WHITE,track=curses.COLOR_WHITE,primary=curses.COLOR_CYAN,
+            secondary=curses.COLOR_MAGENTA,number=curses.COLOR_WHITE,good=curses.COLOR_GREEN,
+            warning=curses.COLOR_YELLOW,error=curses.COLOR_RED,section=curses.COLOR_CYAN,
+            hotkey=curses.COLOR_CYAN,panel=curses.COLOR_WHITE).items()}
+        palette.update(badge_good=(curses.COLOR_BLACK,curses.COLOR_GREEN),
+                       badge_warning=(curses.COLOR_BLACK,curses.COLOR_YELLOW),
+                       badge_error=(curses.COLOR_WHITE,curses.COLOR_RED),
+                       badge_rx=(curses.COLOR_WHITE,curses.COLOR_BLUE))
+    for index,(name,(foreground,bg)) in enumerate(palette.items(),1):
+        if index >= curses.COLOR_PAIRS:
+            break
+        try:
+            curses.init_pair(index,foreground,bg)
+            # Explicit track colors are already subdued in the 256-color theme.
+            style = 0 if curses.COLORS >= 256 and name in ('border','track','dim') else styles.get(name,0)
+            styles[name] = curses.color_pair(index)|style
+        except curses.error:
+            pass
+    return styles
 
 
 def draw_screen(screen, lines, attributes):
     import curses
     screen.erase()
-    height, width = screen.getmaxyx()
-    for row, line in enumerate(lines[:height]):
-        # Leave the terminal's lower-right cell unused to avoid ERR on wrap.
-        text = line.text[:max(0,width-1)].replace('\t',' ')
-        if text:
+    height,width = screen.getmaxyx()
+    for row,item in enumerate(lines[:height]):
+        column = 0
+        for text,role in item.spans or ((item.text,item.role),):
+            text = clip(text,max(0,width-1-column))
+            if not text:
+                continue
             try:
-                screen.addnstr(row, 0, text, max(0,width-1), attributes.get(line.role,0))
+                screen.addstr(row,column,text,attributes.get(role,0))
             except curses.error:
-                # A resize may occur between getmaxyx and addnstr.
+                # Resize can race drawing; leave the lower-right cell unused.
                 pass
+            column += cells(text)
     screen.refresh()
 
 
@@ -188,18 +113,9 @@ def run_tui(args, config):
         except curses.error:
             pass
         screen.timeout(100)
-        attributes = dict(title=curses.A_BOLD, dim=curses.A_DIM,
-                          warning=curses.A_BOLD, error=curses.A_BOLD, good=curses.A_BOLD)
-        if curses.has_colors():
-            curses.start_color()
-            try:
-                curses.use_default_colors()
-                for index, color in enumerate((curses.COLOR_GREEN,curses.COLOR_YELLOW,curses.COLOR_RED),1):
-                    curses.init_pair(index,color,-1)
-                attributes.update(good=curses.color_pair(1)|curses.A_BOLD,
-                                  warning=curses.color_pair(2), error=curses.color_pair(3)|curses.A_BOLD)
-            except curses.error:
-                pass
+        attributes = configure_colors(curses)
+        screen.bkgd(' ',attributes.get('normal',0))
+        unicode = 'utf' in (getattr(screen,'encoding',None) or locale.getpreferredencoding(False)).lower()
         thread.start()
         paused = False
         frozen = None
@@ -214,7 +130,7 @@ def run_tui(args, config):
             view = frozen if paused else latest
             height, width = screen.getmaxyx()
             scroll = max(0,min(scroll,max(0,len(view['channels'])-max(1,height-11))))
-            draw_screen(screen,render_lines(view,width,height,paused,scroll),attributes)
+            draw_screen(screen,render_lines(view,width,height,paused,scroll,unicode=unicode),attributes)
             key = screen.getch()
             if key in (ord('q'),ord('Q'),27):
                 break

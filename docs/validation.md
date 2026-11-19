@@ -1,4 +1,15 @@
-# Validation — 0.6.1
+# Validation — 0.6.2
+
+## Presentation-only refresh
+
+0.6.2 adds the cyan/violet dashboard, fractional-block meters, a wide-terminal
+telemetry/events sidebar and monochrome/eight-color/ASCII fallbacks. The live
+receiver, DSP, queue and hopping implementations are unchanged from 0.6.1.
+Existing state/PTY checks pass; compact/wide, paused and ASCII layouts fit their
+terminal bounds. No new test cases were added. Pure layout took about 1.4ms
+per 140x26 frame in a local check; this is not end-to-end display latency.
+The preview image uses recorded RF, not an active radio capture. Paused values
+are marked HELD and stale armed state is not highlighted as currently armed.
 
 ## Live-user regression and patch
 
