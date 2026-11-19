@@ -86,25 +86,47 @@ def phase_for(view):
     return ('WAITING NORMAL SYNC' if s.get('discovered_uid') else 'SEARCHING SYNC'),'warning'
 
 
-def sidebar(view, available):
+def telemetry_display(view, paused=False):
+    t = view.get('telemetry') or {};values = t.get('values')
+    state = t.get('freshness','UNSEEN')
+    if values and state=='fresh':
+        state = 'LIVE' if (view['status']['locked'] and not view['status']['done']
+                           and view['input_idle']<=1 and not paused) else 'HELD'
+    role = 'good' if state=='LIVE' else 'dim' if not values else 'warning'
+    return t,values,state,role
+
+
+def sidebar(view, available, paused=False):
     s = view['status'];c = s['counters']
     gap = s.get('last_rc_gap_seconds')
     last = '--' if view['last_channel_hz'] is None else f"{view['last_channel_hz']/1e6:.4f} MHz"
     cfo = '--' if view['cfo_hz'] is None else f"{view['cfo_hz']:+.0f} Hz"
     behind = s.get('processing_lag_seconds',max(0,s['source_seconds']-s['processed_through_s']))
-    rows = [[(' TELEMETRY','section')],[]]
+    rows = [[(' RECEIVER TELEMETRY','section')]]
     def metric(label,value,role='number'):
         rows.append([(f'  {label:<12} ','dim'),(str(value),role)])
+    link = view.get('link') or {}
+    metric('MODE / TLM',f"{link.get('link_mode') or '--'} / {link.get('telemetry_ratio') or '--'}")
+    t,values,state,role = telemetry_display(view,paused)
+    metric('RX STATS',state+('' if t.get('age') is None else f" {t['age']:.1f}s"),role)
+    if values:
+        rssi = lambda key:'--' if values[key] is None else str(values[key])
+        metric('RSSI 1 / 2',f"{rssi('uplink_rssi_1_dbm')}/{rssi('uplink_rssi_2_dbm')} dBm",role)
+        metric('LQ / SNR',f"{values['uplink_lq_percent']}% / {values['uplink_snr_db']:+.1f} dB",role)
+        metric('ANT / MM',f"{values['active_antenna']} / {'yes' if values['model_match'] else 'no'}",role)
+        metric('TRUE DIVERS.',str(values['true_diversity_available']),role)
+    else:
+        rows.append([('  No receiver stats received.','dim')])
+    rows += [[],[(' MONITOR DIAGNOSTICS','section')]]
     metric('RF',last);metric('CFO',cfo)
     metric('OUTPUT',f"{view['output_rc_per_s']} RC/s",'primary')
     metric('GAP last/max','--' if gap is None else f"{gap*1000:.0f}/{s.get('max_rc_gap_seconds',gap)*1000:.0f} ms")
     metric('DSP behind',f'{behind*1000:.0f} ms','warning' if behind>.15 else 'good')
     metric('QUEUE',f"{s['queue_depth']} / {s['queue_capacity']}")
-    rows.append([('  ','normal')]+gauge(s['queue_depth']/max(1,s['queue_capacity']),max(8,available-4),'secondary'))
     metric('APP DROP',f"{s['application_dropped_seconds']*1000:.0f} ms",'warning' if s['application_dropped_seconds'] else 'good')
     metric('RETUNES',c.get('retunes',0))
     metric('EXCLUDED',f"{s.get('retune_discarded_seconds',0):.3f} s")
-    metric('GRID / HOP',f"{c.get('off_grid',0)} / {c.get('hop_frequency_failures',0)}")
+    metric('TLM early',c.get('telemetry_early_retunes',0))
     rows += [[],[(' EVENTS','section')]]
     # Wrap only genuine receiver events, never invent activity/signal quality.
     for level,message in reversed(view['events'][-3:]):
@@ -212,6 +234,15 @@ def render_lines(view,width,height,paused=False,scroll=0,unicode=True):
                          (f"{state_text:<8} ",'good' if state=='fresh' else bar_role)])
         gap = s.get('last_rc_gap_seconds')
         gaps = '--' if gap is None else f"{gap:.3f}/{s.get('max_rc_gap_seconds',gap):.3f}s"
+        t,values,tlm_state,tlm_role = telemetry_display(view,paused)
+        link = view.get('link') or {}
+        telemetry_text = f" {link.get('link_mode') or '--'} TLM {link.get('telemetry_ratio') or '--'} | RX {tlm_state}"
+        if values:
+            rssi = values['uplink_rssi_1_dbm']
+            telemetry_text += (f" RSSI {rssi if rssi is not None else '--'}dBm"
+                               f" LQ {values['uplink_lq_percent']}% SNR {values['uplink_snr_db']:+.1f}dB"
+                               f" age {t['age']:.1f}s")
+        body.append([(telemetry_text,tlm_role)])
         body.append([(f" CH {scroll+1}-{scroll+visible}/{len(view['channels'])} | decoded RC gap last/max {gaps}",'dim')])
         if s.get('capture_mode')=='hop-following':
             footer = f" FHSS 80 channels | retunes {counts.get('retunes',0)} | excluded {s.get('retune_discarded_seconds',0):.3f}s"
@@ -226,7 +257,7 @@ def render_lines(view,width,height,paused=False,scroll=0,unicode=True):
             for level,message in view['events'][-slots:] if slots>0 else []:
                 body.append([(' '+message,'error' if level=='error' else 'warning' if level=='warning' else 'dim')]);slots-=1
         body += [[] for _ in range(max(0,slots))]
-        right = sidebar(view,side) if side else []
+        right = sidebar(view,side,paused) if side else []
         for i,parts in enumerate(body):
             lines.append(framed(parts,fw,right[i] if i<len(right) else [] if side else None,main))
     keys = ' q/Esc quit · Space pause · r ranges · ↑↓/Pg scroll '

@@ -4,6 +4,7 @@ from collections import Counter, deque
 from .protocol import (uid_from_phrase, parse_uid, format_uid, decode_long_interleaver,
                        validate_crc, decode_sync, decode_rc, decode_data)
 from .profiles import get_profile, canonical_switch, switch_bit
+from .telemetry import downlink_offset, link_details, decode_downlink
 
 
 def validate_config(cfg):
@@ -97,6 +98,51 @@ class LiveDecoder:
             self.counts['data'] += 1
         return r
 
+    @property
+    def link_status(self):
+        return link_details(self.anchor['sync']) if self.anchor else None
+
+    def _downlink_frequency(self, frame, grid_time):
+        # Legacy fixed-band recordings have modulo-sample-rate RF aliases.
+        # Live TrackingDecoder supplies the strict firmware FHSS check.
+        return True
+
+    def _packet(self, r, p):
+        if self.anchor and r['time_s'] >= self.anchor.get('real_sync_time_s',self.anchor['time_s']):
+            offset = downlink_offset(self.profile)
+            slots = round((r['time_s']-offset-self.anchor['time_s'])/self.profile.interval)
+            grid = self.anchor['time_s']+slots*self.profile.interval
+            residual = r['time_s']-grid-offset
+            # Keep this gate disjoint from the 100us uplink grid, including
+            # the short 500Hz offset. A downlink NEVER enters _uplink().
+            tolerance = min(.00025,abs(offset)/3)
+            if abs(residual) <= tolerance:
+                nonce = (self.anchor['sync']['nonce']+slots)&255
+                denominator = self.link_status['telemetry_denominator']
+                if denominator==1 or nonce%denominator:
+                    self.counts['telemetry_slot_rejected'] += 1
+                    return None
+                if not self._downlink_frequency(r,grid):
+                    return None
+                if not validate_crc(p,self.initializer,nonce):
+                    self.counts['telemetry_crc_failures'] += 1
+                    return None
+                try:
+                    telemetry = decode_downlink(p)
+                except ValueError:
+                    self.counts['telemetry_layout_failures'] += 1
+                    return None
+                r.update(crc_ok=True,inferred_nonce=nonce,direction='downlink',
+                         status='validated_downlink',slot_timing_error_us=residual*1e6,
+                         telemetry=telemetry,**self.link_status)
+                self.counts['telemetry'] += 1
+                self.counts['link_statistics' if telemetry['kind']=='link_statistics' else 'telemetry_data'] += 1
+                return r
+        validated = self._uplink(r,p)
+        if validated is not None:
+            validated['direction'] = 'uplink'
+        return validated
+
     def _accept_sync(self, frame):
         return True
 
@@ -131,7 +177,9 @@ class LiveDecoder:
                 self.reset()
                 self.counts['unsupported_sync'] += 1
                 return []
-            r.update(sync=sync, crc_ok=True, identity_match=True, status='validated_sync')
+            sync.update(link_details(sync))
+            r.update(sync=sync, crc_ok=True, identity_match=True, status='validated_sync',
+                     direction='uplink',real_sync_time_s=r['time_s'])
             if not self._accept_sync(r):
                 return []
             self.anchor = r
@@ -152,5 +200,5 @@ class LiveDecoder:
                 self.counts['pending_overflows'] += 1
             self.pending.append(r)
             return []
-        validated = self._uplink(r, p)
+        validated = self._packet(r, p)
         return [validated] if validated else []

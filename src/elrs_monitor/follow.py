@@ -3,6 +3,8 @@ from collections import Counter
 import threading
 
 from .decoder import LiveDecoder
+from .telemetry import downlink_offset, DENOMINATORS
+from .hackrf import NativeSource
 from .fhss import (HopClock,sequence,FIRST_HZ,SPACING_HZ,SEQUENCE_COUNT,
                    CHANNEL_OFFSET_HZ,ACQUISITION_CENTER_HZ)
 
@@ -17,6 +19,13 @@ class TrackingDecoder(LiveDecoder):
         if (not 0 <= index < SEQUENCE_COUNT or
                 frame['channel_hz'] != FIRST_HZ+self.channels[index]*SPACING_HZ):
             self.counts['hop_frequency_failures'] += 1
+            return False
+        return True
+
+    def _downlink_frequency(self, frame, grid_time):
+        clock = HopClock.from_sync(self.anchor,self.profile)
+        if frame['channel_hz'] != clock.frequency_at(grid_time,self.channels):
+            self.counts['telemetry_hop_failures'] += 1
             return False
         return True
 
@@ -53,6 +62,7 @@ class HopFollower:
         self.tune_lead = max(0,profile.interval-profile.airtime-.0005)
         self.lock = threading.Lock()
         self.clock = None
+        self.telemetry_denominator = 1
         self.phase = 'acquiring'
         self.lost = threading.Event()
         self.stop = threading.Event()
@@ -72,6 +82,7 @@ class HopFollower:
             if self.lost.is_set():
                 return
             self.clock = HopClock.from_sync(anchor,self.profile)
+            self.telemetry_denominator = DENOMINATORS[anchor['sync'].get('telemetry_ratio_code',0)]
             self.phase = 'following'
         self.wake.set()
 
@@ -89,6 +100,7 @@ class HopFollower:
         now = self.source.radio_time()
         with self.lock:
             clock = self.clock
+            denominator = self.telemetry_denominator
         if now is None:
             return .005
         if clock is not None and now-clock.time_s > self.timeout:
@@ -98,17 +110,36 @@ class HopFollower:
             self.source.tune(ACQUISITION_CENTER_HZ)
             return .01
         tuning_time = now+self.tune_lead
+        boundary = clock.next_boundary(tuning_time)
+        deadline = boundary-self.tune_lead
+        boundary_nonce = (clock.nonce+round((boundary-clock.time_s)/clock.interval))&255
+        early = False
+        if (denominator>1 and boundary_nonce%denominator==0
+                and boundary_nonce%(4*self.profile.hop_interval)==0):
+            # Cap early tuning at one in four hop boundaries. At 1:2, moving
+            # EVERY hop early could erase every uplink at 50Hz, starving the
+            # validated uplink clock. Standard ratios already meet this cap.
+            # Preserve the existing quarantine, not uncertain retune samples.
+            # Sacrifice preceding uplink IQ only at selected telemetry hops.
+            lead = max(self.tune_lead,-downlink_offset(self.profile)+NativeSource.SETTLE_SECONDS+.001)
+            deadline = boundary-lead
+            if now>=deadline:
+                tuning_time = boundary
+                early = True
+                deadline = clock.next_boundary(boundary)-self.tune_lead
         index = clock.index_at(tuning_time)
         if self.last_index is not None:
             distance = (index-self.last_index)%SEQUENCE_COUNT
             if distance > 1:
                 self.counts['hop_deadlines_skipped'] += distance-1
+        if early and index!=self.last_index:
+            self.counts['telemetry_early_retunes'] += 1
         self.last_index = index
         center = clock.frequency_at(tuning_time,self.channels)-CHANNEL_OFFSET_HZ
         self.source.tune(center)
         # Re-evaluate after the control call; never chase a stale queued list
         # of frequencies after a delayed deadline or a changed phase anchor.
-        return max(.0001,min(.02,clock.next_boundary(tuning_time)-self.tune_lead-self.source.radio_time()))
+        return max(.0001,min(.02,deadline-self.source.radio_time()))
 
     def _run(self):
         try:

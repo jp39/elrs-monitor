@@ -13,6 +13,51 @@ experimental: retune gaps, OS timing, and RF conditions can still miss packets;
 it is not a guaranteed complete control stream. Legacy raw IQ replay remains
 fixed-band. FLRC/GFSK modes such as D250 and F1000 are deliberately excluded.
 
+## Receiver telemetry
+
+Receiver link statistics are decoded automatically after a matching normal sync:
+receiver-reported **uplink RSSI1/RSSI2, SNR, link quality, active antenna,
+Model Match and true-diversity flags**. Link Mode (Normal/MAVLink) and the
+**effective telemetry ratio** are read from sync and followed dynamically;
+there are no manual mode/ratio flags. Telemetry off is displayed as `off`.
+
+Use the usual command, with the bound transmitter **and receiver connected**
+and transmitter telemetry enabled:
+
+```bash
+.venv/bin/elrs-monitor --bind-phrase julian --rate 50 --switch-mode Wide \
+  --model-match on --model-id 0 --tui
+```
+
+The compact dashboard has an RX statistics line; the wide layout separates
+**RECEIVER TELEMETRY** from **MONITOR DIAGNOSTICS**. Receiver statistics have
+independent UNSEEN/LIVE/HELD/STALE states and sample age. The stale threshold is
+at least `--stale-after`, or three announced telemetry periods if longer.
+RSSI2 may be unavailable on a single-antenna receiver; zero/unavailable RSSI
+is shown as `--`, not 0dBm. These are receiver reports, **not HackRF RF estimates**.
+A bare receiver does not automatically provide battery/GPS/flight-controller data.
+
+Text labels downlinks `RX LINKSTATS` or `RX DATA`. JSON/JSONL downlinks carry
+`direction: "downlink"`, `status: "validated_downlink"`, inferred nonce, mode,
+ratio and a separate `telemetry` object. Linkstats use `kind: "link_statistics"`;
+forwarded data remains `kind: "data_fragment"` with package index, acknowledgement
+bit and raw `payload_hex`. **No CRSF sensor or MAVLink message reassembly yet.**
+MAVLink mode detection and common link-statistics decoding are not full MAVLink
+payload support. Telemetry never updates RC channels or advances the uplink clock.
+
+Direction is gated by the RX TOCK timing, announced telemetry slot, identity-seeded
+CRC/nonce and (live) predicted FHSS frequency—not packet type alone. Ratio changes
+are applied from validated sync; ambiguous transition packets may be discarded
+rather than guessed. No telemetry is decoded before sync or across reacquisition.
+
+To clear the unchanged 4ms retune quarantine before telemetry, selected telemetry
+hops retune earlier, potentially losing the preceding uplink. Early tuning is
+capped at one in four hop boundaries to preserve uplink reception even at 1:2;
+standard ratios already satisfy that cap. Other downlinks may remain uncaptured.
+`telemetry_early_retunes` counts these decisions. **Live downlink yield and the RC
+tradeoff still need validation with a connected transmitter/receiver.** Synthetic
+checks and recorded-uplink regressions are not proof of real downlink reception.
+
 ## Install
 
 Requires Linux/Unix, Python **3.11+**, NumPy, SciPy, and (for RF reception)
@@ -255,8 +300,9 @@ cd ~/elrs-monitor
 
 The dashboard uses a dark cyan/violet instrument-panel layout, smooth
 fractional-block channel meters, half-scale guides for analog channels, and
-an explicit link-state badge. At 116+ columns, a separate telemetry/events
-sidebar appears; compact terminals retain the full channel table with scrolling.
+an explicit link-state badge. At 116+ columns, a separate receiver-telemetry and
+monitor-diagnostics sidebar appears; compact terminals retain the channel table
+with scrolling and a receiver-statistics summary.
 UTF-8/256-color terminals get the full theme; ASCII, eight-color and monochrome
 fallbacks require no extra dependencies. Pausing marks retained readings HELD,
 not LIVE. No receiver/DSP behavior is changed by the presentation layer.
@@ -438,7 +484,8 @@ or loss-free long-run guarantee is made.
   is not ordinary payload encryption.
 - No automatic rate/switch discovery or UID discovery from normal traffic.
   Binding discovery requires an explicit transmitter Bind session.
-- No FLRC, Gemini, telemetry interpretation, or data-payload reassembly.
+- No FLRC, Gemini, CRSF sensor/MAVLink message decoding, or data-payload reassembly.
+  Receiver link-statistics decoding is implemented but not yet validated on live downlink RF.
 - No command/transmit path, firmware flashing, receiver binding, or failsafe
   control. The dashboard is an instrument, not a flight-control receiver.
 - Use low transmitter power and antenna separation. Never directly connect a

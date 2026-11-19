@@ -1,4 +1,45 @@
-# Validation — 0.6.2
+# Validation — 0.7.0
+
+## Receiver telemetry implementation (RF validation pending)
+
+Firmware reference: ExpressLRS 4.1.0 `a9d4a9c`, `OTA.h` packed std/full
+`data_dl`/`OTA_LinkStats_s`, shared nonce-seeded CRC, `rx_main.cpp`
+`HWtimerCallbackTock`, `HandleSendDataDl`, `LinkStatsToOta` and packet-to-TOCK
+slack calculation; `tx_main.cpp` telemetry gaps and effective-ratio sync fields;
+SX1280 `common.cpp` RFperf TOA and SNR scaling (signed quarter-dB).
+
+Three focused synthetic checks cover all six profiles, Normal/MAVLink metadata,
+std/full layouts, nonce wrap, direction gates, wrong CRC/frequency/slot, telemetry
+off and sync changes, unchanged RC/anchor state, early tuning, independent age,
+compact/wide bounds and paused readings. Full suite: **123 tests pass**. Two
+stale renderer assertions in the existing Full-mode scrolling test were updated
+to the actual 0.6.2+ row/header format; their old whitespace expectations failed
+without indicating a protocol regression.
+
+Physical 20s 50Hz/Wide/MM ID0 IQ replay: **6 sync / 144 RC / 0 downlink**, retaining
+all 144 packets in the older `/tmp/elrs-50-validated.jsonl` (6 sync / 138 RC).
+Re-encoding and feeding all **449** observations from the validated 0.6.1 live
+run through strict tracking retains **445 RC / 4 sync**, without falsely counting
+any as telemetry. These are recorded-uplink regressions, not new live validation.
+
+An additional deterministic synthesized-IQ check through channelization, PHY,
+FEC, CRC and the real replay CLI recovers sync plus a correctly laid-out downlink,
+without creating RC values. A 100us-step scheduler simulation at 1:2 retains
+complete uplinks on all six profiles over 290ms (including the 4ms quarantine).
+This checks the anti-starvation policy, not real-time scheduling jitter or RF yield.
+Script: `/tmp/elrs-telemetry-pipeline-check.py`.
+
+A bounded 12s hardware run produced no PHY candidates or syncs, zero host drops,
+and no retunes; it does **not** validate downlink reception or the early-retune
+tradeoff. Artifacts: `/tmp/elrs-telemetry-first-live{.jsonl,.txt,-status.log}`;
+replay: `/tmp/elrs-telemetry-50-regression.jsonl` and corresponding `.status`.
+A connected bound transmitter and receiver with telemetry enabled are required
+for the next RF check. No live sensor or MAVLink reassembly is claimed.
+
+Early tuning preserves the 4ms quarantine, but may lose the preceding uplink.
+It is limited to one in four hop boundaries (all standard telemetry ratios
+satisfy this limit); otherwise an aggressive 1:2 ratio could starve uplink timing
+refresh. Retune timing and real telemetry yield still need physical validation.
 
 ## Presentation-only refresh
 

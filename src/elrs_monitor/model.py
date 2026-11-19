@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import threading
 import time
 
-from .profiles import channel_specs, canonical_switch, canonical_rate
+from .profiles import channel_specs, canonical_switch, canonical_rate, get_profile
 
 
 @dataclass
@@ -57,6 +57,9 @@ class MonitorState:
         self.source_label = source_label
         self.discover_binding = discover_binding
         self.binding = None
+        self.link = None
+        self.telemetry = None
+        self.telemetry_time = None
         self.identity = dict(identity) if identity is not None else None
         self.model_id = model_id
         self.model_match = model_match
@@ -85,6 +88,9 @@ class MonitorState:
             self._frame_wall = now
             self.last_channel_hz = frame['channel_hz']
             self.cfo_hz = frame.get('cfo_hz')
+            if frame.get('telemetry',{}).get('kind')=='link_statistics':
+                self.telemetry = dict(frame['telemetry'])
+                self.telemetry_time = frame['time_s']
             if 'binding' in frame:
                 self.binding = dict(frame['binding'])
                 b = self.binding
@@ -105,11 +111,15 @@ class MonitorState:
                         self.channels[u['channel']-1].update(u['value'],t)
                 self._rc_times.append(now)
             if 'sync' in frame:
+                self.link = {k:frame['sync'].get(k) for k in
+                             ('link_mode','telemetry_ratio','telemetry_denominator')}
                 self.events.append(('info', f"SYNC {frame['time_s']:.3f}s  nonce={frame['sync']['nonce']}  identity/CRC OK"))
 
     def on_status(self, status):
         with self._lock:
             self.status = {**status, 'counters': dict(status['counters'])}
+            if 'link' in status:
+                self.link = dict(status['link']) if status['link'] else None
             if 'discover_binding' in status:
                 self.discover_binding = status['discover_binding']
             if status.get('identity') is not None:
@@ -145,7 +155,16 @@ class MonitorState:
             status = {**self.status, 'counters': dict(self.status['counters'])}
             while self._rc_times and self._rc_times[0] < now-1:
                 self._rc_times.popleft()
-            return dict(status=status, channels=[c.snapshot(sample_clock,self.stale_after) for c in self.channels],
+            age = None if self.telemetry_time is None else max(0,sample_clock-self.telemetry_time)
+            # Linkstats can legitimately arrive seconds apart at standard ratios.
+            # Use announced telemetry cadence, not RC cadence; gaps stay explicit.
+            denominator = (self.link or {}).get('telemetry_denominator') or 1
+            timeout = max(self.stale_after,3*denominator*get_profile(self.packet_rate).interval)
+            telemetry = dict(values=dict(self.telemetry) if self.telemetry is not None else None,
+                             age=age,stale_after=timeout,
+                             freshness='UNSEEN' if age is None else 'STALE' if age>timeout else 'fresh')
+            return dict(link=dict(self.link) if self.link else None,telemetry=telemetry,
+                        status=status, channels=[c.snapshot(sample_clock,self.stale_after) for c in self.channels],
                         source_label=self.source_label, model_id=self.model_id,
                         discover_binding=self.discover_binding,
                         identity=dict(self.identity) if self.identity is not None else None,

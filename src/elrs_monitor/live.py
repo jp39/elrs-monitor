@@ -115,6 +115,7 @@ def run_live(args, config, observer, stop=None):
                 ('following' if following else 'reacquiring' if follower and follower.phase=='reacquiring'
                  else 'awaiting_sync'),
             locked=following,counters=counters,identity=identity,
+            link=getattr(decoder,'link_status',None),
             discover_binding=acquiring(),discovery_requested=requested,
             discovered_uid=format_uid(learned) if learned is not None else None,
             binding_confirmations=decoder.confirmations if acquiring() else confirmations,

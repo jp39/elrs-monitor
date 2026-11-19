@@ -82,6 +82,7 @@ def run_receiver(args, config, observer, stop=None):
     def status(done=False):
         observer.on_status(dict(
             locked=decoder.anchor is not None,counters=dict(decoder.counts),
+            link=getattr(decoder,'link_status',None),
             source_seconds=source.samples/FS,processed_through_s=processed,
             source_idle_seconds=max(0,time.monotonic()-source.last_read),
             queue_depth=source.queue.qsize(),queue_capacity=source.queue.maxsize,

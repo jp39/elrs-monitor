@@ -246,8 +246,8 @@ class SwitchTests(unittest.TestCase):
         self.assertEqual(view['channels'][0]['freshness'],'STALE')
         self.assertEqual(view['channels'][8]['freshness'],'fresh')
         lines=render_lines(view,100,24,scroll=3)
-        self.assertIn(' 16   ','\n'.join(l.text for l in lines))
-        self.assertIn('333Hz Full 16ch',lines[1].text)
+        self.assertIn(' 16  AUX12','\n'.join(l.text for l in lines))
+        self.assertIn('333Hz Full / 16ch',lines[1].text)
 
 
 class ConfigurationTests(unittest.TestCase):

@@ -25,7 +25,17 @@ def format_frame(frame):
                 f"{b['confirmations']}/{b['required']} CRC=OK (four received bytes; zero-padded prefix)")
     if 'sync' in frame:
         s = frame['sync']
-        return f"{prefix} SYNC nonce={s['nonce']:3d} hop_index={s['fhss_index']:3d} CRC=OK ID=OK"
+        return (f"{prefix} SYNC nonce={s['nonce']:3d} hop_index={s['fhss_index']:3d} CRC=OK ID=OK"
+                f" mode={s.get('link_mode','--')} telemetry={s.get('telemetry_ratio','--')}")
+    if 'telemetry' in frame:
+        t = frame['telemetry']
+        if t['kind']=='link_statistics':
+            return (f"{prefix} RX LINKSTATS RSSI1={t['uplink_rssi_1_dbm']} RSSI2={t['uplink_rssi_2_dbm']}dBm"
+                    f" LQ={t['uplink_lq_percent']}% SNR={t['uplink_snr_db']:+.2f}dB"
+                    f" antenna={t['active_antenna']} MM={t['model_match']}"
+                    f" diversity={t['true_diversity_available']} CRC=OK")
+        return (f"{prefix} RX DATA fragment={t['package_index']} payload={t['payload_hex']}"
+                ' CRC=OK (raw; not reassembled)')
     if 'rc' in frame:
         rc = frame['rc']
         updates = rc.get('channel_updates') or [dict(channel=i+1,value=v)
@@ -58,6 +68,7 @@ class TextObserver:
                       f"excluded={status.get('retune_discarded_seconds',0):.3f}s",file=sys.stderr,flush=True)
             print(f"status: phase={status.get('phase','monitoring')} sync={'locked' if status['locked'] else 'searching'} "
                   f"PHY={c.get('phy_candidates',0)} SYNC={c.get('sync',0)} RC={c.get('rc',0)} DATA={c.get('data',0)} "
+                  f"RX_TLM={c.get('telemetry',0)} link={status.get('link')} "
                   f"reject(CRC/FEC/ID/mode)={c.get('crc_failures',0)}/{c.get('fec_failures',0)}/"
                   f"{c.get('identity_failures',0)}/{c.get('unsupported_sync',0)+c.get('mode_failures',0)} "
                   f"iq={status['source_seconds']:.1f}s behind={status.get('processing_lag_seconds',0):.3f}s "
