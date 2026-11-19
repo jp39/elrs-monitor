@@ -66,6 +66,8 @@ class MonitorState:
         self.channel_count = channel_count
         self.packet_rate = canonical_rate(packet_rate)
         self.switch_mode = canonical_switch(switch_mode)
+        self.switch_mode_label = self.switch_mode
+        self.configuration_epoch = None
         self.channels = [Channel(i,'AUX1 / arm' if kind == 'armed' else
                                  (f'CH{i}' if i <= 4 else f'AUX{i-4}'),bits,kind)
                          for i,bits,kind in channel_specs(self.switch_mode)]
@@ -82,8 +84,24 @@ class MonitorState:
         self.error = None
         self.finished = False
 
+    def _configuration(self, info):
+        if not info.get('adaptive'):
+            return
+        rate,mode = info['packet_rate'],info['switch_mode']
+        epoch = info.get('configuration_epoch',0)
+        if (rate,mode,epoch)!=(self.packet_rate,self.switch_mode,self.configuration_epoch):
+            self.packet_rate,self.switch_mode,self.configuration_epoch = rate,mode,epoch
+            self.channels = [Channel(i,'AUX1 / arm' if kind=='armed' else
+                                     (f'CH{i}' if i<=4 else f'AUX{i-4}'),bits,kind)
+                             for i,bits,kind in channel_specs(mode)]
+            self.armed = Channel(0,'Armed flag',1,'armed')
+            self._rc_times.clear()
+            self.telemetry = self.telemetry_time = None
+        self.switch_mode_label = info.get('switch_mode_label',mode)
+
     def on_frame(self, frame):
         with self._lock:
+            self._configuration(frame)
             now = self.clock()
             self._frame_wall = now
             self.last_channel_hz = frame['channel_hz']
@@ -110,13 +128,19 @@ class MonitorState:
                     if 1 <= u['channel'] <= len(self.channels):
                         self.channels[u['channel']-1].update(u['value'],t)
                 self._rc_times.append(now)
+            if 'configuration_change' in frame:
+                self.status = dict(self.status,locked=False,
+                                   phase='unsupported' if frame['status']=='unsupported_change' else 'reconfiguring')
+                self.events.append(('warning',frame['configuration_change']))
             if 'sync' in frame:
                 self.link = {k:frame['sync'].get(k) for k in
                              ('link_mode','telemetry_ratio','telemetry_denominator')}
-                self.events.append(('info', f"SYNC {frame['time_s']:.3f}s  nonce={frame['sync']['nonce']}  identity/CRC OK"))
+                if 'configuration_change' not in frame:
+                    self.events.append(('info', f"SYNC {frame['time_s']:.3f}s  nonce={frame['sync']['nonce']}  identity/CRC OK"))
 
     def on_status(self, status):
         with self._lock:
+            self._configuration(status)
             self.status = {**status, 'counters': dict(status['counters'])}
             if 'link' in status:
                 self.link = dict(status['link']) if status['link'] else None
@@ -170,7 +194,8 @@ class MonitorState:
                         identity=dict(self.identity) if self.identity is not None else None,
                         binding=dict(self.binding) if self.binding is not None else None,
                         model_match=self.model_match,packet_rate=self.packet_rate,
-                        switch_mode=self.switch_mode,armed=self.armed.snapshot(sample_clock,self.stale_after),
+                        switch_mode=self.switch_mode,switch_mode_label=self.switch_mode_label,
+                        armed=self.armed.snapshot(sample_clock,self.stale_after),
                         channel_count=self.channel_count, stale_after=self.stale_after,
                         events=list(self.events), last_channel_hz=self.last_channel_hz,
                         cfo_hz=self.cfo_hz, output_rc_per_s=len(self._rc_times),

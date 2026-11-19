@@ -1,4 +1,47 @@
-# Validation — 0.7.1
+# Validation — 0.8.0
+
+## Adaptive live rate/switch implementation
+
+`AdaptiveTrackingDecoder` validates UID/Model Match, identity-seeded CRC and
+FHSS sync-channel index/frequency before considering a configuration. It treats
+old-PHY announcements as proposals, clears the old clock, and resumes RC only
+from matching destination-PHY sync. Same-PHY switch-layout changes require two
+distinct matching syncs; pending RC, pre-change observations and unsupported
+announcements cannot unlock channels. Full bit-zero modes use the shared 8/12ch
+layout and an explicitly ambiguous label. Identity/model restrictions do not adapt.
+
+The acquisition profile bank shares FFT channelization and runs all six supported
+LoRa profiles only while unlocked. Following retains single-profile processing.
+Rate changes replace the independent scheduler, preserve the source/sample clock
+and JSONL stream, and tag configuration epochs. Presentation state resets channel,
+arm, min/max and telemetry history at rate/layout/epoch changes. Legacy raw replay
+is unchanged: explicit fixed rate/mode, no adaptive scanning.
+
+Three focused synthetic checks cover old-PHY announcements/destination sync,
+stale queued observations, missed announcements, strict Model Match, duplicate
+sync rejection during switch confirmation, Full 8/12 ambiguity, model reset,
+unsupported-rate suppression and supported-link recovery. **127 tests pass**.
+An additional synthesized-IQ check uses real DSP/live engine across frequency
+epochs: 50Hz/Wide sync → old-PHY 250Hz/Hybrid announcement → new-PHY sync →
+five RC frames, correct final layout. `/tmp/elrs-adaptive-iq-check.py`.
+
+**Active connected TX+RX startup acquisition:** supplied intentionally wrong
+250Hz/Hybrid hints while RF remained 50Hz/Wide/MM ID0. In 15s the monitor found
+50Hz/Wide and decoded **497 RC / 35 LINKSTATS / 2 sync**, with **zero host drops
+or reacquisitions**, 294 retunes, 37 early-retune decisions, maximum RC gap
+80.014ms, final DSP lag 7.744ms and final state following. This proves fallback
+profile acquisition and preserved 50Hz reception, **not a physical rate-change
+handover**, other-rate telemetry timing, full-rate yield or display latency.
+Artifacts: `/tmp/elrs-adaptive-stationary-live{.jsonl,.txt,.status}`.
+
+The next physical check must change the transmitter's rate/switch encoding
+while one process is running, then quantify reacquisition and RC/telemetry yield.
+Other-rate telemetry direction timing remains RF-unvalidated.
+
+Re-feeding recorded real live packet observations through strict adaptive tracking
+retains all **449** frames from 0.6.1 (445 RC / 4 sync), and all **1,482** frames
+from 0.7.1 (1,386 RC / 90 LINKSTATS / 6 sync), with no spurious configuration
+changes. This is an observation-level regression, not a new IQ or live-rate test.
 
 ## Connected receiver telemetry: physical 50Hz fix and validation
 

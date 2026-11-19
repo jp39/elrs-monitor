@@ -15,7 +15,7 @@ from .constants import FS
 from .decoder import LiveDecoder, identity_details
 from .binding import BindingDiscoveryDecoder
 from .protocol import format_uid
-from .dsp import extract_window
+from .dsp import extract_window, fft_channels, extract_channel
 from .profiles import DEFAULT, get_profile
 
 
@@ -23,6 +23,17 @@ def process_window(window, offsets, profile=DEFAULT):
     return sorted(extract_window(np.frombuffer(window.data,dtype=np.int8),
                                  window.start,window.core_start,window.core_end,
                                  offsets,profile),key=lambda b:b['time_s'])
+
+
+def process_profiles_window(window, offsets, profiles):
+    """Acquisition-only profile bank; one FFT channelization shared by all PHYs."""
+    raw = np.frombuffer(window.data,dtype=np.int8)
+    observations = []
+    for offset,y in fft_channels(raw,offsets):
+        for profile in profiles:
+            observations.extend(dict(b,_profile=profile.name) for b in
+                extract_channel(y,offset,window.start,window.core_start,window.core_end,profile))
+    return sorted(observations,key=lambda b:b['time_s'])
 
 
 def process_acquisition_window(window, offsets, target):

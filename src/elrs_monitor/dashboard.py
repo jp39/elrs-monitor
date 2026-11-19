@@ -80,6 +80,8 @@ def phase_for(view):
     if view['finished'] or s['done']:return 'STOPPED / EOF','warning'
     if view['input_idle'] > 1:return 'IQ STALLED','warning'
     if view.get('discover_binding'):return 'LISTENING FOR BIND','warning'
+    if s.get('phase')=='unsupported':return 'UNSUPPORTED MODE','warning'
+    if s.get('phase')=='reconfiguring':return 'RECONFIGURING LINK','warning'
     if s['locked']:
         return ('HOP FOLLOWING' if s.get('capture_mode')=='hop-following' else 'SYNC LOCKED'),'good'
     if s.get('phase')=='reacquiring':return 'REACQUIRING SYNC','warning'
@@ -159,7 +161,7 @@ def render_lines(view,width,height,paused=False,scroll=0,unicode=True):
     rule = max(0,fw-3-cells(title)-cells(badge))
     heading += [('─'*rule,'border'),(badge,'badge_rx'),('╮','border')]
     match = 'ON ID '+str(view['model_id']) if view['model_match'] else 'OFF'
-    setup = f" {view['source_label']}  ·  2.4GHz {view['packet_rate']} / {view['switch_mode']}  ·  Model Match {match}"
+    setup = f" {view['source_label']}  ·  2.4GHz {view['packet_rate']} / {view.get('switch_mode_label',view['switch_mode'])}  ·  Model Match {match}"
     identity = view.get('identity')
     identity_text = ' UID --' if identity is None else (
         f" UID {identity['uid']} | sync {identity['sync_uid']} | "

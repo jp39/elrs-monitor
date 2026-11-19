@@ -18,18 +18,23 @@ from .binding import BindingDiscoveryDecoder
 from .capture import Window
 from .constants import FS
 from .decoder import identity_details
-from .engine import process_window,process_acquisition_window
+from .engine import process_window,process_acquisition_window,process_profiles_window
+from .adaptive import AdaptiveTrackingDecoder
 from .fhss import ACQUISITION_CENTER_HZ,CHANNEL_OFFSET_HZ
-from .follow import TrackingDecoder,HopFollower
+from .follow import HopFollower
 from .hackrf import NativeSource
 from .profiles import get_profile
 from .protocol import format_uid
 
 
 def process_radio_window(window, center, epoch, target, binding):
-    observations = (process_acquisition_window(window,[CHANNEL_OFFSET_HZ],target) if binding else
+    observations = (process_profiles_window(window,[CHANNEL_OFFSET_HZ],target) if isinstance(target,tuple) else
+                    process_acquisition_window(window,[CHANNEL_OFFSET_HZ],target) if binding else
                     process_window(window,[CHANNEL_OFFSET_HZ],target))
     for b in observations:
+        # Tag even single-profile jobs: they may finish after a rate change.
+        if '_profile' not in b:
+            b['_profile'] = target.name
         b['channel_hz'] += center-ACQUISITION_CENTER_HZ
         b['capture_epoch'] = epoch
         b['rx_center_hz'] = center
@@ -82,7 +87,7 @@ class RadioWindows:
 def run_live(args, config, observer, stop=None):
     stop = stop if stop is not None else threading.Event()
     requested = config.get('discover_binding',False)
-    decoder = BindingDiscoveryDecoder(config) if requested else TrackingDecoder(config)
+    decoder = BindingDiscoveryDecoder(config) if requested else AdaptiveTrackingDecoder(config)
     target = get_profile(config.get('packet_rate','250Hz'))
     source = NativeSource(args)
     follower = None
@@ -108,12 +113,17 @@ def run_live(args, config, observer, stop=None):
         following = follower is not None and follower.clock is not None
         counters = dict(decoder.counts)
         if follower is not None:
-            counters.update(dict(follower.counts))
+            for key,value in follower.counts.items():
+                counters[key] = counters.get(key,0)+value
         counters['retunes'] = source.retunes
         observer.on_status(dict(
             capture_mode='hop-following',radio_diagnostics=args.radio_diagnostics,phase='binding' if acquiring() else
-                ('following' if following else 'reacquiring' if follower and follower.phase=='reacquiring'
+                (decoder.phase if decoder.phase in ('reconfiguring','unsupported') else
+                 'following' if following else 'reacquiring' if follower and follower.phase=='reacquiring'
                  else 'awaiting_sync'),
+            adaptive=not acquiring(),configuration_epoch=getattr(decoder,'configuration_epoch',0),
+            configuration_reason=getattr(decoder,'reason',None),
+            switch_mode_label=getattr(decoder,'mode_label',config['switch_mode']),
             locked=following,counters=counters,identity=identity,
             link=getattr(decoder,'link_status',None),
             discover_binding=acquiring(),discovery_requested=requested,
@@ -127,7 +137,7 @@ def run_live(args, config, observer, stop=None):
             retune_max_seconds=source.retune_max_seconds,rx_center_hz=source.center_hz,
             processing_lag_seconds=max(0,source.samples/FS-processed),
             last_rc_gap_seconds=last_gap,max_rc_gap_seconds=max_gap,
-            packet_rate=target.name,switch_mode=config['switch_mode'],
+            packet_rate=target.name,switch_mode=decoder.switch_mode if not acquiring() else config['switch_mode'],
             windows=windows,elapsed_s=time.monotonic()-started,done=done))
 
     def report_identity():
@@ -141,15 +151,18 @@ def run_live(args, config, observer, stop=None):
         return HopFollower(source,target,decoder.channels).start()
 
     def consume(job):
-        nonlocal decoder,learned,confirmations,identity,follower,processed,windows,last_rc,last_gap,max_gap
+        nonlocal decoder,learned,confirmations,identity,follower,processed,windows,last_rc,last_gap,max_gap,target
         window,future = job
         for b in future.result():
             if b['time_s'] < minimum_time:
                 decoder.counts['observations_before_reacquisition'] += 1
                 continue
-            if b.get('_profile',decoder.profile.name)!=decoder.profile.name:
+            if acquiring() and b.get('_profile',decoder.profile.name)!=decoder.profile.name:
                 continue
+            revision = getattr(decoder,'revision',0)
             for frame in decoder.feed(b):
+                if frame.get('configuration_change'):
+                    observer.on_message(frame['configuration_change'],'warning')
                 frame.update(capture_mode='hop-following')
                 if 'rc' in frame and (last_rc is None or frame['time_s']>last_rc):
                     if last_rc is not None:
@@ -165,13 +178,23 @@ def run_live(args, config, observer, stop=None):
                 counts = decoder.counts
                 settings = {k:v for k,v in config.items() if k!='discover_binding'}
                 settings['uid'] = learned
-                decoder = TrackingDecoder(settings)
+                decoder = AdaptiveTrackingDecoder(settings)
                 decoder.counts = counts
                 decoder.counts['handovers'] += 1
                 identity = dict(identity_details(settings),source='binding',prefix_reconstructed=True)
                 follower = start_follower()
                 report_identity()
-                observer.on_message('UID learned; waiting for matching normal sync, then following hops.')
+                observer.on_message('UID learned; scanning for matching normal sync, then following hops.')
+            elif not acquiring() and decoder.revision!=revision:
+                # A proposal is not a new clock. Stop the old timing scheduler
+                # before installing one for the destination PHY. Keep source,
+                # sample counter, log and bounded queued jobs intact.
+                if follower is not None:
+                    follower.close()
+                    decoder.counts.update(follower.counts)
+                target = decoder.profile
+                follower = start_follower()
+                status()
             if follower is not None and decoder.anchor is not None:
                 follower.track(decoder.anchor)
         decoder.advance(window.core_end/FS)
@@ -182,7 +205,8 @@ def run_live(args, config, observer, stop=None):
 
     def submit(pool, window, frequency, generation):
         if window is not None:
-            jobs.append((window,pool.submit(process_radio_window,window,frequency,generation,target,acquiring())))
+            profiles = target if acquiring() else (decoder.scan_profiles if decoder.anchor is None else target)
+            jobs.append((window,pool.submit(process_radio_window,window,frequency,generation,profiles,acquiring())))
             if len(jobs) >= max(1,args.workers*2):
                 consume(jobs.popleft())
 
@@ -206,6 +230,7 @@ def run_live(args, config, observer, stop=None):
             return
         report_identity()
         observer.on_message('Receive-only live FHSS following (experimental): acquiring on 2440.4MHz. '
+                            'Rate/switch hints adapt from validated sync; searching supported LoRa profiles. '
                             'Retune gaps can miss packets; full-rate reception is not guaranteed.')
         source.start()
         if not acquiring():

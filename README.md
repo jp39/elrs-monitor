@@ -13,6 +13,48 @@ experimental: retune gaps, OS timing, and RF conditions can still miss packets;
 it is not a guaranteed complete control stream. Legacy raw IQ replay remains
 fixed-band. FLRC/GFSK modes such as D250 and F1000 are deliberately excluded.
 
+## Automatic live rate and switch adaptation
+
+Live monitoring treats `--rate` and `--switch-mode` as **startup hints**, not fixed
+restrictions. A known phrase/UID and the configured Model Match checks are still
+required. The same command can remain running while you change among the six
+supported 2.4GHz LoRa packet rates and their supported switch encodings.
+
+Acquisition/reacquisition searches supported PHYs on 2440.4MHz. The profile bank
+shares one channelization pass; steady-state monitoring decodes only the active
+PHY. An identity/CRC/frequency-valid sync announcing another rate enters
+**RECONFIGURING LINK**. Announcements may use the old PHY: they are not used as
+new-profile hop anchors. Only matching sync decoded on the destination PHY can
+resume RC. Same-PHY switch-layout changes require a second distinct matching sync.
+If an announcement is missed, loss of hop lock returns to profile-bank acquisition.
+The source, identity, sample clock and frame log remain open across changes.
+
+The TUI updates rate, switch label and channel layout automatically. Rate/layout
+changes reset channel/arm/range and telemetry history rather than reinterpreting
+old values under the new layout. JSON frames/status include active `packet_rate`,
+`switch_mode`, `switch_mode_label`, `configuration_epoch`, and `adaptive`;
+proposal events use `announced_change` or `unsupported_change` with a reason.
+
+**Full 8ch and 12ch share a sync bit.** Live display therefore labels the safe
+common layout **8/12ch**, with CH9–12 UNSEEN until explicitly carried by a
+CRC/nonce/frequency-valid high-group packet. It never claims 8ch merely because
+high-group packets were not received. Full 16ch and standard Hybrid/Wide have
+distinct sync encodings. Legacy replay still uses the explicit rate/mode and
+does not scan or dynamically reconfigure.
+
+Unsupported advertised rates (including FLRC), Gemini and reserved link modes
+produce an **UNSUPPORTED MODE** state, not RC output. Model Match/model ID checks
+are never silently changed; nor can this follow an unknown new binding UID.
+No settings file is read or saved. Initial CLI hints must still form a valid pair.
+
+Validation: a deliberately wrong 250Hz/Hybrid live hint acquired the actual
+50Hz/Wide link: **497 RC / 35 receiver stats / 2 sync in 15s**, zero host drops
+or reacquisitions. A synthesized-IQ 50Hz/Wide → 250Hz/Hybrid transition passes
+through the real live engine/DSP and updates the model layout. **An actual
+transmitter rate-change handover still needs RF validation.** Transitions can
+lose packets and take seconds to reacquire; no seamless/full-rate guarantee.
+Other-rate telemetry timing is still experimental, independent of rate detection.
+
 ## Receiver telemetry
 
 Receiver link statistics are decoded automatically after a matching normal sync:
@@ -102,8 +144,8 @@ Other flags are optional:
 
 | Setting | Default |
 | --- | --- |
-| Packet rate | 250Hz; binding discovery automatically uses 50Hz |
-| Switch mode | Hybrid |
+| Packet rate | Live startup hint 250Hz; fixed for legacy replay; binding uses 50Hz |
+| Switch mode | Live startup hint Hybrid; fixed for legacy replay |
 | Model Match | Off |
 | Model ID | 0; ignored while Model Match is off |
 | Capture source | Live HackRF; first available device |
@@ -236,12 +278,12 @@ No settings are saved. JSON/JSONL records contain `binding_candidate` and
 `binding_discovered`, followed by validated normal sync/RC/data frames. Neither
 binding record alone is an RC update or sync lock.
 
-`--rate`, `--switch-mode`, `--model-match`, and `--model-id` specify the
-transmitter's **normal** settings, not binding settings. They must match its
-configuration after Bind mode ends. Defaults remain 250Hz/Hybrid, Model Match
-off, ID 0; normal rate/mode discovery is not implemented. Binding acquisition
-always uses 50Hz on 2440.4MHz independently of those settings. Incompatible
-normal rate/mode combinations are rejected before capture starts.
+`--rate` and `--switch-mode` specify live normal-link startup hints (fixed normal
+settings for legacy replay), not binding settings. Live normal sync can adapt
+them after Bind ends. Model Match/model ID remain explicit, strict checks.
+Defaults remain 250Hz/Hybrid, Model Match off, ID 0. Binding acquisition always
+uses 50Hz on 2440.4MHz independently. Incompatible initial hint combinations
+are rejected before capture starts.
 
 Do not supply a phrase or UID alongside `--discover-binding`. Live acquisition processes the sync channel only, then follows the learned
 link. For replay the default channel selection is all nine; a custom `--offset`
@@ -283,12 +325,11 @@ for the scope of the recorded-RF and lifecycle checks.
 | 333Hz Full | 5 | LI 4/8 | 13 bytes | 8ch, 12ch, 16ch |
 | 500Hz | 5 | LI 4/6 | 8 bytes | Hybrid, Wide |
 
-100/333 automatically select the Full PHY profile, but you must also select a
-compatible switch mode. Incompatible combinations fail before opening the
-radio. There is no automatic rate or switch-mode discovery. 8ch and 12ch share
-one sync encoding bit, so they cannot be distinguished from sync alone; match
-the transmitter's setting explicitly. A wrong setting can otherwise interpret
-a low-group packet identically before a high-group packet exposes the mismatch.
+100/333 select the Full PHY profile; initial hints must include a compatible
+switch mode. Incompatible combinations fail before opening the radio. Live
+rate/switch adaptation is automatic after validated sync. 8ch and 12ch share
+one sync encoding bit, so live uses the safe shared **8/12ch** mapping and label.
+For fixed-profile replay, select the transmitter's actual mode explicitly.
 
 ## Live channel dashboard
 
@@ -485,8 +526,9 @@ or loss-free long-run guarantee is made.
   loss**. Underlying sample discontinuity can require reacquisition.
 - CRC is error detection, not cryptographic authentication. The binding phrase
   is not ordinary payload encryption.
-- No automatic rate/switch discovery or UID discovery from normal traffic.
-  Binding discovery requires an explicit transmitter Bind session.
+- Live adaptation covers the six supported LoRa profiles, not every transmitter
+  parameter. No UID discovery from normal traffic; binding discovery requires
+  an explicit transmitter Bind session. Model Match settings remain explicit.
 - No FLRC, Gemini, CRSF sensor/MAVLink message decoding, or data-payload reassembly.
   Receiver link-statistics decoding is live-RF validated at 50Hz/Wide only.
 - No command/transmit path, firmware flashing, receiver binding, or failsafe
@@ -529,6 +571,7 @@ src/elrs_monitor/
   fhss.py         firmware-compatible sequence and unwrapped hop/slot clock
   follow.py       validated phase tracking and independent tuning scheduler
   live.py         default live acquisition/following/reacquisition pipeline
+  adaptive.py     validated live rate/switch proposals and destination-PHY confirmation
   profiles.py     LoRa geometry, intervals, mode compatibility
   dsp.py, phy.py  profile-driven channelization and symbol recovery
   protocol.py     FEC, dewhitening, CRC, packet parsing

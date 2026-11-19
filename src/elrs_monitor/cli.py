@@ -23,10 +23,13 @@ def format_frame(frame):
         state = 'DISCOVERED' if b['confirmed'] else 'candidate'
         return (f"{prefix} BIND {state} UID={b['uid']} "
                 f"{b['confirmations']}/{b['required']} CRC=OK (four received bytes; zero-padded prefix)")
+    if 'configuration_change' in frame:
+        return f"{prefix} {frame['status'].upper()} {frame['configuration_change']} CRC=OK ID=OK"
     if 'sync' in frame:
         s = frame['sync']
         return (f"{prefix} SYNC nonce={s['nonce']:3d} hop_index={s['fhss_index']:3d} CRC=OK ID=OK"
-                f" mode={s.get('link_mode','--')} telemetry={s.get('telemetry_ratio','--')}")
+                f" mode={s.get('link_mode','--')} telemetry={s.get('telemetry_ratio','--')}"
+                +(f" PHY={frame['packet_rate']} / {frame['switch_mode_label']}" if frame.get('adaptive') else ''))
     if 'telemetry' in frame:
         t = frame['telemetry']
         if t['kind']=='link_statistics':
@@ -70,7 +73,8 @@ class TextObserver:
                       f"excluded={status.get('retune_discarded_seconds',0):.3f}s",file=sys.stderr,flush=True)
             print(f"status: phase={status.get('phase','monitoring')} sync={'locked' if status['locked'] else 'searching'} "
                   f"PHY={c.get('phy_candidates',0)} SYNC={c.get('sync',0)} RC={c.get('rc',0)} DATA={c.get('data',0)} "
-                  f"RX_TLM={c.get('telemetry',0)} link={status.get('link')} "
+                  f"RX_TLM={c.get('telemetry',0)} profile={status.get('packet_rate')}/{status.get('switch_mode_label',status.get('switch_mode'))} "
+                  f"link={status.get('link')} "
                   f"reject(CRC/FEC/ID/mode)={c.get('crc_failures',0)}/{c.get('fec_failures',0)}/"
                   f"{c.get('identity_failures',0)}/{c.get('unsupported_sync',0)+c.get('mode_failures',0)} "
                   f"iq={status['source_seconds']:.1f}s behind={status.get('processing_lag_seconds',0):.3f}s "
@@ -128,19 +132,23 @@ Four bytes are padded with 00:00; this does not recover the original MAC/phrase.
 Discovery listens for binding at 50Hz / 2440.4MHz, regardless of the normal rate.
 Ordinary traffic does NOT announce its binding UID. Start listening before BIND.
 Three repeated valid binding messages learn a UID, then monitoring continues.
---rate / --switch-mode / --model-match / --model-id select NORMAL operation.
+--rate / --switch-mode select live startup hints (fixed settings for legacy replay).
+--model-match / --model-id remain strict identity/model checks, not auto-detected.
 After binding ends, a matching CRC-valid normal sync is required before RC output.
-Defaults remain 250Hz / Hybrid / Model Match off / ID 0; no automatic rate discovery.
+Defaults remain 250Hz / Hybrid / Model Match off / ID 0.
 There is no stop-after-discovery mode or implicit time limit. --seconds limits the
 whole session; EOF/time limit before learning any UID is an error.
 The learned UID stays in memory across IQ gaps; no settings are saved automatically.
 Only one binding transmitter should be active. No receiver is required.
 
-For normal monitoring, rate/mode/Model Match must match the transmitter.
-Live: sync-channel acquisition then automatic receive-only FHSS following at 10Msps.
+Live: validated sync adapts rate/switch mode and automatic receive-only FHSS following.
+Acquisition/reacquisition searches six supported LoRa PHYs on the sync channel.
+8ch/12ch are indistinguishable in sync: live uses a safe shared 8/12ch layout.
+Unsupported FLRC/Gemini changes never unlock RC. Model Match checks remain strict.
 Retune/settling gaps can miss packets, especially at faster rates. No full-rate guarantee.
 Loss of hop lock returns to sync acquisition; learned identity remains in memory.
-Replay: legacy fixed-2440MHz raw IQ; it cannot reproduce live retuning timing.
+Replay: fixed-2440MHz raw IQ with explicit rate/mode; no adaptive rate scanning.
+It cannot reproduce live retuning timing.
 Binding phrases are identity seeds, not secrets or encryption/authentication keys.
 Startup shows the supplied phrase, full base UID, and Model Match-adjusted sync bytes.
 The TUI keeps the base UID visible; startup/status text goes to stderr, not JSON stdout.
@@ -163,9 +171,9 @@ TUI keys: q/Esc quit; Space pause; r reset min/max; arrows/PageUp/PageDown scrol
                       help='Model Match ID 0..63 (default: 0); ignored when off; does not enable matching')
     link.add_argument('--packet-rate','--refresh-rate','--rate',dest='packet_rate',type=canonical_rate,
                       default=None,metavar='HZ',
-                      help='LoRa 50, 100, 150, 250, 333, 500Hz (default: 250); 100/333 use Full packets')
+                      help='Live startup hint / fixed replay rate: LoRa 50, 100, 150, 250, 333, 500Hz (default: 250)')
     link.add_argument('--switch-mode',type=canonical_switch,default=None,metavar='MODE',
-                      help='Hybrid/Wide, or Full 8ch/12ch/16ch (default: Hybrid; combinations below)')
+                      help='Live startup hint / fixed replay mode: Hybrid/Wide or Full 8ch/12ch/16ch (default: Hybrid)')
     display = ap.add_argument_group('display and logging')
     presentation = display.add_mutually_exclusive_group()
     presentation.add_argument('--tui',action='store_true',help='Interactive channel dashboard, minimum 80x22 (default: off)')

@@ -100,35 +100,40 @@ def fast_preamble(y, start, profile=DEFAULT):
 def extract_window(raw, window_start, core_start, core_end, offsets, profile=DEFAULT):
     """Yield PHY observations with absolute sample-clock timestamps."""
     for offset, y in fft_channels(raw, offsets):
-        for start, end, power in find_bursts_fast(y,profile):
-            # Guard bursts belong to adjacent cores. Avoid repeating expensive
-            # preamble/interpolation recovery there. Retain a generous 2ms
-            # margin for energy-edge and coarse-symbol timing uncertainty.
-            approximate_time = window_start/FS+start/RATE
-            if approximate_time < core_start/FS-.002 or approximate_time >= core_end/FS+.002:
+        yield from extract_channel(y,offset,window_start,core_start,core_end,profile)
+
+
+def extract_channel(y, offset, window_start, core_start, core_end, profile=DEFAULT):
+    """Recover one channel/profile; acquisition can reuse its channelized IQ."""
+    for start, end, power in find_bursts_fast(y,profile):
+        # Guard bursts belong to adjacent cores. Avoid repeating expensive
+        # preamble/interpolation recovery there. Retain a generous 2ms
+        # margin for energy-edge and coarse-symbol timing uncertainty.
+        approximate_time = window_start/FS+start/RATE
+        if approximate_time < core_start/FS-.002 or approximate_time >= core_end/FS+.002:
+            continue
+        candidate = fast_preamble(y,start,profile)
+        if candidate is None:
+            continue
+        score, s, polarity = candidate
+        expected = [(polarity*b)%profile.bins for b in (8,16)]
+        payload = None
+        # A repeating preamble can make a neighboring symbol boundary win.
+        for boundary in (s,s-profile.n,s+profile.n):
+            try:
+                recovered = recover_payload(y,boundary,polarity,profile)
+            except ValueError:
                 continue
-            candidate = fast_preamble(y,start,profile)
-            if candidate is None:
-                continue
-            score, s, polarity = candidate
-            expected = [(polarity*b)%profile.bins for b in (8,16)]
-            payload = None
-            # A repeating preamble can make a neighboring symbol boundary win.
-            for boundary in (s,s-profile.n,s+profile.n):
-                try:
-                    recovered = recover_payload(y,boundary,polarity,profile)
-                except ValueError:
-                    continue
-                if recovered['sync_bins'] == expected:
-                    payload = recovered
-                    break
-            if payload is None:
-                continue
-            t = window_start/FS + payload['corrected_start_sample']/RATE
-            if not core_start/FS <= t < core_end/FS:
-                continue
-            yield dict(time_s=t, channel_hz=2_440_000_000+offset,
-                       polarity=polarity, preamble_score=score,
-                       cfo_hz=payload['cfo_hz'],
-                       power_to_floor_db=float(10*np.log10(power)),
-                       payload_bins=payload['payload_bins'])
+            if recovered['sync_bins'] == expected:
+                payload = recovered
+                break
+        if payload is None:
+            continue
+        t = window_start/FS + payload['corrected_start_sample']/RATE
+        if not core_start/FS <= t < core_end/FS:
+            continue
+        yield dict(time_s=t, channel_hz=2_440_000_000+offset,
+                   polarity=polarity, preamble_score=score,
+                   cfo_hz=payload['cfo_hz'],
+                   power_to_floor_db=float(10*np.log10(power)),
+                   payload_bins=payload['payload_bins'])
