@@ -4,7 +4,8 @@ from collections import Counter, deque
 from .protocol import (uid_from_phrase, parse_uid, format_uid, decode_long_interleaver,
                        validate_crc, decode_sync, decode_rc, decode_data)
 from .profiles import get_profile, canonical_switch, switch_bit
-from .telemetry import downlink_offset, link_details, decode_downlink
+from .telemetry import (downlink_offset, downlink_tolerance, uplink_tolerance,
+                        link_details, decode_downlink)
 
 
 def validate_config(cfg):
@@ -77,7 +78,7 @@ class LiveDecoder:
         delta = r['time_s']-self.anchor['time_s']
         slots = round(delta/self.profile.interval)
         residual = delta-slots*self.profile.interval
-        if abs(residual) > 100e-6:
+        if abs(residual) > uplink_tolerance(self.profile):
             self.counts['off_grid'] += 1
             return None
         nonce = (self.anchor['sync']['nonce']+slots) & 255
@@ -113,14 +114,10 @@ class LiveDecoder:
             slots = round((r['time_s']-offset-self.anchor['time_s'])/self.profile.interval)
             grid = self.anchor['time_s']+slots*self.profile.interval
             residual = r['time_s']-grid-offset
-            # Keep this gate disjoint from the 100us uplink grid, including
-            # the short 500Hz offset. A downlink NEVER enters _uplink().
-            # Physical 50Hz RX reports start ~380us after the firmware-only
-            # TOCK estimate (RX IRQ/radio turnaround is not included there).
-            # Widen ONLY this RF-validated profile; stay far from the uplink
-            # grid and keep slot/nonce/CRC/frequency gates unchanged.
-            tolerance = min(.00075 if self.profile.name=='50Hz' else .00025,
-                            abs(offset)/3)
+            # Direction windows are disjoint, including 500Hz where real
+            # downlinks fell INSIDE the old ±100us RC gate. They must never
+            # enter _uplink(), update channels or steer the uplink clock.
+            tolerance = downlink_tolerance(self.profile)
             if abs(residual) <= tolerance:
                 nonce = (self.anchor['sync']['nonce']+slots)&255
                 denominator = self.link_status['telemetry_denominator']

@@ -10,6 +10,15 @@ TOA_US = {'50Hz':10798, '100Hz Full':7605, '150Hz':5871,
           '250Hz':3300, '333Hz Full':2374, '500Hz':1507}
 DENOMINATORS = (1,128,64,32,16,8,4,2)
 
+# EMPIRICAL model residuals, NOT ELRS/Semtech timing constants and not a
+# measurement of IRQ latency alone. They include the difference between RF
+# preamble timestamps and ELRS callback/TOCK time, plus driver/modem timing.
+# Firmware gives the base below, not this end-to-end hardware-dependent delay.
+# Provenance and derivation: docs/telemetry-timing.md. 50Hz keeps its existing
+# separately validated wider gate; scheduling never uses these residuals.
+MEASURED_RF_START_RESIDUAL_US = {'100Hz Full':295, '150Hz':280, '250Hz':260,
+                                 '333Hz Full':210, '500Hz':200}
+
 
 def firmware_downlink_offset(profile):
     """Earliest firmware-only estimate, retained for conservative retuning."""
@@ -20,12 +29,26 @@ def firmware_downlink_offset(profile):
 def downlink_offset(profile):
     """Expected RF start relative to the nonce's uplink grid, not RX IRQ time.
 
-    Physical SX1280 250Hz/Wide reports cluster at -250..-237us, rather than
-    firmware-only -500us. Include the measured +260us IRQ/radio turnaround.
-    50Hz keeps its existing, separately RF-validated wider gate. No correction
-    is guessed for unvalidated PHYs. Retuning still uses the earlier estimate.
+    Residuals were measured on connected TX+RX packets, not inferred from
+    packet type or fitted from channel values. Their cause is not uniquely
+    separable into IRQ/driver/modem latency without hardware instrumentation.
+    Retuning still uses the earlier firmware estimate, not these corrections.
     """
-    return firmware_downlink_offset(profile)+(.000260 if profile.name=='250Hz' else 0)
+    return firmware_downlink_offset(profile)+MEASURED_RF_START_RESIDUAL_US.get(profile.name,0)/1e6
+
+
+def uplink_tolerance(profile):
+    # Real 500Hz downlinks occur ~90us before the uplink grid. The old ±100us
+    # uplink gate could decode them as RC. Recorded real uplinks stay within
+    # ±16us; use ±45us, disjoint from the corrected downlink window.
+    return .000045 if profile.name=='500Hz' else .000100
+
+
+def downlink_tolerance(profile):
+    offset = abs(downlink_offset(profile))
+    # Keep an explicit 10us no-man's-land, even if future calibration changes.
+    return max(0,min(.00075 if profile.name=='50Hz' else .00025,
+                     offset/3,offset-uplink_tolerance(profile)-.000010))
 
 
 def link_details(sync):

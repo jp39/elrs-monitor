@@ -5,8 +5,9 @@ TUI, text/JSON output, frame logging, and deterministic IQ replay.
 
 **Target:** ExpressLRS 4.1.0 / OTA-v4, **2.4 GHz LoRa**, non-Gemini. Six
 LoRa profiles and all corresponding switch modes are configurable. **250Hz /
-Hybrid and 50Hz / Wide are validated on physical RF recordings. Other PHY
-profiles remain experimental and synthetic-tested.**
+Hybrid and 50Hz / Wide have physical IQ recordings. All six PHY profiles now
+have physical packet regressions, including receiver link statistics. Full switch-mode
+coverage and long-run reception yield remain experimental.**
 **Live capture now follows the transmitter's 80-channel hopping sequence.**
 It acquires a normal sync on 2440.4MHz, then retunes automatically. This is
 experimental: retune gaps, OS timing, and RF conditions can still miss packets;
@@ -53,8 +54,9 @@ or reacquisitions. A synthesized-IQ 50Hz/Wide → 250Hz/Hybrid transition passes
 through the real live engine/DSP and updates the model layout. **An actual
 transmitter rate-change handover still needs RF validation.** Transitions can
 lose packets and take seconds to reacquire; no seamless/full-rate guarantee.
-Receiver telemetry is RF-validated at 50Hz/Wide and 250Hz/Wide; other-rate
-telemetry timing is still experimental, independent of rate detection.
+Receiver telemetry has physical packet regressions at all six supported rates.
+The user's live rate sweep was captured and rechecked with the corrected decoder;
+this is not a second post-fix live sweep or a guarantee across every receiver board.
 
 ## Receiver telemetry
 
@@ -106,8 +108,18 @@ the firmware-only estimate. **250Hz/Wide/MM ID0:** 65 link-statistics reports,
 Its measured downlink starts ~240us before the uplink grid, not the firmware-only
 500us estimate; a +260us RF-start correction gives a narrow ±80us direction gate,
 separate from the ±100us uplink gate. Retune scheduling still uses the earlier
-firmware estimate and is unchanged. Other PHY downlinks, custom ratios and
-MAVLink remain unvalidated on live RF; no complete telemetry/RC stream is guaranteed.
+firmware estimate and is unchanged. The remaining 100/150/333/500Hz direction
+models now have physical regressions from a live rate sweep. Across that recorded
+sweep, the corrected decoder accepts **811 receiver reports** while retaining all
+**16,583 previously decoded RC packets**. At 500Hz, receiver packets fall inside
+the old RC ±100us window: a narrower ±45us uplink gate now keeps directions
+separate. No complete telemetry/RC stream is guaranteed.
+
+The firmware scheduling rule is source-derived; the RF-start residual is
+**measured calibration**, not an ELRS specification constant or a measurement of
+IRQ latency alone. The source/datasheet trace, timing equation, measured ranges,
+and hardware limitations are documented in [the timing audit](docs/telemetry-timing.md).
+Other receiver hardware/firmware, custom ratios and MAVLink still need validation.
 
 ## Install
 
@@ -536,7 +548,8 @@ or loss-free long-run guarantee is made.
   parameter. No UID discovery from normal traffic; binding discovery requires
   an explicit transmitter Bind session. Model Match settings remain explicit.
 - No FLRC, Gemini, CRSF sensor/MAVLink message decoding, or data-payload reassembly.
-  Receiver link-statistics decoding is live-RF validated at 50Hz/Wide and 250Hz/Wide.
+  Receiver link-statistics direction has physical packet regressions on all six
+  supported PHYs, not universal timing guarantees across hardware/firmware builds.
 - No command/transmit path, firmware flashing, receiver binding, or failsafe
   control. The dashboard is an instrument, not a flight-control receiver.
 - Use low transmitter power and antenna separation. Never directly connect a

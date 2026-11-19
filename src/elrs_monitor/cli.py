@@ -115,7 +115,7 @@ def parse_args(argv=None):
   50, 150, 250, 500Hz    Hybrid or Wide
   100, 333Hz Full       8ch, 12ch, or 16ch (select explicitly)
 Rates accept numbers or names such as '333Hz Full'. No FLRC/GFSK/D/F modes.
-250Hz/Hybrid and 50Hz/Wide have recorded-RF validation; other PHY profiles are experimental.
+All six PHYs have physical packet fixtures; full mode coverage and long-run yield remain experimental.
 Binding discovery also has a real RF capture fixture.
 
 Examples:

@@ -1,8 +1,8 @@
 """ELRS 4.1.0 SX1280 2.4GHz LoRa profiles (not FLRC/GFSK).
 
-50Hz/Wide and 250Hz/Hybrid have physical RF regression captures. Other PHY
-profiles still require RF validation; geometry and OTA fields follow firmware
-and the SX1280 implicit long-interleaved timing formula.
+All six profiles have CRC-valid physical packet fixtures, including receiver
+LINKSTATS. Full channel-mode coverage and long-run yield remain experimental;
+geometry and OTA fields follow firmware and the SX1280 long-interleaved formula.
 """
 from dataclasses import dataclass
 import math

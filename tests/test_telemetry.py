@@ -6,7 +6,7 @@ from elrs_monitor.fhss import HopClock
 from elrs_monitor.model import MonitorState
 from elrs_monitor.dashboard import render_lines, cells
 from elrs_monitor.profiles import PROFILES
-from elrs_monitor.telemetry import downlink_offset
+from elrs_monitor.telemetry import downlink_offset, downlink_tolerance, uplink_tolerance
 from test_modes import config, sync_packet, seal, observation, rc_packet
 from test_hopping import FakeRadio
 
@@ -83,6 +83,37 @@ class TelemetryTests(unittest.TestCase):
         frame, = d.feed(uplink)
         self.assertIn('rc',frame)
         self.assertNotIn('telemetry',frame)
+
+    def test_remaining_physical_profiles_and_disjoint_direction_windows(self):
+        # Real sync + LINKSTATS bytes/timestamps from the user's rate sweep.
+        rows = [
+            ('100Hz Full',62.14150908413461,'02504117065fec00000000bf0e',
+             62.449595859375,'0034801e34000000000000e4dc',2428400000,96),
+            ('150Hz',68.74134960625001,'d6504118065fece6',
+             68.94767304711539,'e00033801e3400b2',2428400000,96),
+            ('333Hz Full',36.56720043533654,'02a0811c025fec000000000129',
+             36.94835612253606,'0035806426000000000000f887',2408400000,0),
+            ('500Hz',40.85824085222356,'36a0811d025fec29',
+             41.11215540234375,'1000358064260058',2408400000,0),
+        ]
+        for name,st,sp,dt,dp,hz,nonce in rows:
+            with self.subTest(profile=name):
+                p=PROFILES[name]
+                cfg=dict(binding_phrase='julian',packet_rate=name,model_id=0,model_match=True,
+                         switch_mode='12ch' if p.full_resolution else 'Wide',ota_version=4)
+                d=TrackingDecoder(cfg)
+                self.assertEqual(len(d.feed(observation(bytes.fromhex(sp),st,p))),1)
+                anchor=d.anchor
+                b=observation(bytes.fromhex(dp),dt,p);b['channel_hz']=hz
+                frame,=d.feed(b)
+                self.assertEqual(frame['inferred_nonce'],nonce)
+                self.assertIn('telemetry',frame);self.assertNotIn('rc',frame)
+                self.assertIs(d.anchor,anchor);self.assertEqual(d.counts['rc'],0)
+                self.assertLess(downlink_offset(p)+downlink_tolerance(p),-uplink_tolerance(p))
+                grid=st+((nonce-anchor['sync']['nonce'])&255)*p.interval
+                ul=observation(rc_packet(p,cfg,nonce),grid,p);ul['channel_hz']=hz
+                uplink,=d.feed(ul)
+                self.assertIn('rc',uplink);self.assertNotIn('telemetry',uplink)
 
     def test_all_profiles_directions_nonce_wrap_modes_and_no_clock_or_rc_mutation(self):
         for p in PROFILES.values():

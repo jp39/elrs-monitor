@@ -1,4 +1,58 @@
-# Validation — 0.8.1
+# Validation — 0.8.2
+
+## Source audit and remaining-profile telemetry correction
+
+Full reference-point derivation and provenance: [telemetry-timing.md](telemetry-timing.md).
+ELRS source provides the nonce/slot/FHSS/CRC rules and TOCK scheduling formula,
+not an exact RF-preamble timestamp. The source path includes IRQ-status/FIFO SPI
+reads before `beginProcessing`, the phase-control loop, callbacks and radio
+commands after TOCK, and the SX1280 mode transition. Semtech's switching-time
+table gives typical radio-only times, not the complete software path.
+
+The code therefore labels corrections **MEASURED_RF_START_RESIDUAL_US** rather
+than falsely presenting them as protocol constants or IRQ latency measurements.
+50Hz/250Hz behavior and conservative retune scheduling are retained. Remaining
+RF residual corrections: 100Hz Full +295us, 150Hz +280us, 333Hz Full +210us,
+500Hz +200us, relative to the source-derived firmware-only base. **500Hz UL gate
+is ±45us**, not ±100us; DL gate is [-124,-62]us. All direction windows are
+explicitly disjoint, with a minimum 10us guard. Slot/CRC/nonce/predicted RF checks
+remain mandatory; telemetry does not update channels or the uplink anchor.
+
+A temporary diagnostic captured the user's live rate sweep, holding possible
+telemetry out of RC/clock updates, including near-grid 500Hz packets. Final
+bounded session: **300s**, zero host queue drops, 9 accepted configuration changes,
+3 reacquisitions, maximum RC gap 9.748s during changing rates, 45.980s retune-excluded
+IQ. It ended following 50Hz/Wide. It was deliberately not displaying telemetry.
+The later decoder check re-fed captured packet bytes/timestamps through strict
+adaptive tracking with actual-profile tags and duplicate removal:
+
+| Profile | Recorded RC retained | Receiver reports decoded |
+|---|---:|---:|
+| 50Hz | 8092 | 545 |
+| 100Hz Full | 299 | 13 |
+| 150Hz | 917 | 40 |
+| 250Hz | 4092 | 126 |
+| 333Hz Full | 1055 | 19 |
+| 500Hz | 2128 | 68 |
+| Total | **16583** | **811** |
+
+This is a real-RF **packet-observation regression**, not a raw-IQ replay or a
+second live sweep with the patched decoder. It proves these captured downlinks
+are now accepted without losing any previously accepted RC. It does not establish
+full-rate reception, every Full switch mode, universal board timing or latency.
+
+One additional focused test uses real sync and LINKSTATS fixtures from all four
+remaining profiles, checks unchanged RC/anchor state and disjoint windows, and
+verifies genuine on-grid RC at an announced telemetry nonce remains uplink.
+**129 tests pass**. An analytic waveform audit at every profile with 0/-3/-115kHz
+CFO found <0.02us timestamp-estimator error. That numerical check is not independent
+hardware ground truth; its scope and the air-time comparison are in the audit.
+
+Artifacts: `/tmp/elrs-other-rates-2XJUhAjy/{candidates.jsonl,frames.jsonl,status.log}`,
+`/tmp/elrs-recheck-rate-sweep.py`, `/tmp/elrs-recheck-rate-sweep.log`,
+`/tmp/elrs-timing-source-audit.py`. The source reference checkout is unchanged.
+
+## 0.8.1 physical 250Hz/Wide correction
 
 ## Physical 250Hz/Wide receiver telemetry correction
 
