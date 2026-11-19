@@ -89,7 +89,8 @@ def run_tui(args, config):
     # Lazy import lets headless operation work even without curses installed.
     import curses
     stop = threading.Event()
-    state = MonitorState(source_label=('REPLAY '+args.replay.name) if args.replay else 'LIVE HackRF',
+    state = MonitorState(source_label=('REPLAY '+args.replay.name) if args.replay else
+                         'LIVE SoapySDR' if args.backend=='soapy' else 'LIVE HackRF',
                          model_id=config['model_id'], model_match=config['model_match'],
                          channel_count=len(args.offset),stale_after=args.stale_after,
                          packet_rate=config['packet_rate'],switch_mode=config['switch_mode'],

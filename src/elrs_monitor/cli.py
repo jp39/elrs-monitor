@@ -196,13 +196,40 @@ TUI keys: q/Esc quit; Space pause; r reset min/max; arrows/PageUp/PageDown scrol
                          help='Parallel DSP workers, 1..8 (default: 2)')
     capture.add_argument('--offset',type=int,nargs='+',default=None,metavar='HZ',
                          help='Replay only: fixed-center channel offsets (default: all nine); live follows FHSS automatically')
-    radio = ap.add_argument_group('HackRF receive settings (live capture only)')
+    radio = ap.add_argument_group('radio receive settings (live capture only)')
+    radio.add_argument('--backend',choices=('native','soapy'),default='native',
+                       help='RX transport: native libhackrf (default), or optional SoapySDR fallback; no automatic failover')
+    radio.add_argument('--device',metavar='ARGS',
+                       help='SoapySDR device selector, e.g. driver=hackrf,serial=... (default: driver=hackrf)')
+    radio.add_argument('--gain',action='append',default=[],metavar='NAME=DB',
+                       help='SoapySDR named RX gain, repeatable; AMP must remain 0; HackRF otherwise uses --lna/--vga')
     radio.add_argument('--lna',type=int,choices=range(0,41,8),default=16,metavar='DB',
                        help='RX LNA gain, 0..40 dB in steps of 8 (default: 16)')
     radio.add_argument('--vga',type=int,choices=range(0,63,2),default=16,metavar='DB',
                        help='RX VGA gain, 0..62 dB in steps of 2 (default: 16); RF amp and antenna bias always off')
-    radio.add_argument('--serial',metavar='SERIAL',help='Select HackRF serial number (default: first available device)')
+    radio.add_argument('--serial',metavar='SERIAL',help='Device serial number (both backends; default: first matching device)')
     args = ap.parse_args(argv)
+    if args.backend != 'soapy' and (args.device is not None or args.gain):
+        ap.error('--device and --gain require --backend soapy')
+    if args.replay and (args.backend != 'native' or args.device is not None or args.gain):
+        ap.error('--backend/--device/--gain are live-only; replay does not open an SDR')
+    gains = []
+    for item in args.gain:
+        try:
+            name,value = item.split('=',1)
+            value = float(value)
+            if not name or not np.isfinite(value) or (name.upper()=='AMP' and value!=0):
+                raise ValueError()
+        except ValueError:
+            ap.error('--gain requires NAME=finite_dB; RF AMP must remain 0')
+        if name in dict(gains):
+            ap.error(f'duplicate gain stage: {name}')
+        gains.append((name,value))
+    args.gain = gains
+    if args.device is not None and not args.device.strip():
+        ap.error('--device must not be empty')
+    if args.serial and any(c in args.serial for c in ',= \t\n'):
+        ap.error('--serial must be a serial number, not device arguments')
     if args.offset is not None and not args.replay:
         ap.error('--offset applies only to fixed-center --replay; live capture follows FHSS')
     if args.offset is None:

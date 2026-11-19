@@ -1,4 +1,32 @@
-# Validation — 0.8.2
+# Validation — 0.9.0
+
+## Optional SoapySDR transport, native backend retained
+
+- Pre-change source: annotated tag `pre-soapysdr-0.8.2` at `56b5ea8`, plus a
+  separate source archive in `/home/julian/elrs-monitor-snapshots/`.
+- `src/elrs_monitor/hackrf.py` remains byte-for-byte unchanged. The default
+  command still selects it. `--backend soapy` explicitly selects the new transport;
+  there is no silent failover. Replay and DSP/protocol modules are unchanged.
+- SoapySDR C API ABI 0.8, SoapyHackRF plugin `0.3.6-0b8d3f6`, physical HackRF One.
+  RX-only API bindings, channel 0, 10Msps CS8, 8MHz requested bandwidth,
+  LNA/VGA16/16, AMP0 and antenna bias false, same 4ms quarantine.
+- Sequential connected-TX/RX **25s** checks at **150Hz/Wide/MM ID0, telemetry1:32**:
+  Soapy **2308 RC / 103 LINKSTATS / 4 sync / 858 retunes**, native
+  **2118 RC / 90 LINKSTATS / 4 sync / 782 retunes**. Both decoded on all **80**
+  nominal channels, zero host queue drops, no reacquisitions. Soapy reported
+  zero stream overflows; native has no comparable driver-overflow counter.
+- Maximum RC gaps: Soapy93.324ms, native40.010ms. First accepted sync:
+  Soapy2.067s, native4.104s. Different acquisition times/conditions mean the
+  raw totals do not establish a backend performance ranking or full reception.
+- Four focused transport tests added; all existing tests retained. **133 tests pass**.
+  CF32 conversion, unknown discontinuities and partial startup cleanup have
+  focused synthetic coverage, not additional-device RF validation.
+
+Detailed dependency setup, limitations, artifacts and snapshot checksum:
+[soapy.md](soapy.md). This validates the Soapy transport on this HackRF/profile,
+not every device, LoRa profile or failure/recovery condition.
+
+## 0.8.2 source audit and remaining-profile telemetry correction
 
 ## Source audit and remaining-profile telemetry correction
 

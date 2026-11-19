@@ -1,6 +1,6 @@
 """Default live monitor: acquire sync, follow FHSS, reacquire on loss.
 
-Continuous libhackrf RX replaces hackrf_transfer/fixed-band live capture.
+Native libhackrf is the default RX transport; SoapySDR is an explicit fallback.
 DSP batches contiguous stable frequency spans; an independent thread
 controls tuning. Each frequency epoch is filtered separately. Replay remains
 in engine.py because legacy raw files contain no retune metadata.
@@ -89,7 +89,11 @@ def run_live(args, config, observer, stop=None):
     requested = config.get('discover_binding',False)
     decoder = BindingDiscoveryDecoder(config) if requested else AdaptiveTrackingDecoder(config)
     target = get_profile(config.get('packet_rate','250Hz'))
-    source = NativeSource(args)
+    if args.backend == 'soapy':
+        from .soapy import SoapySource
+        source = SoapySource(args)
+    else:
+        source = NativeSource(args)
     follower = None
     identity = identity_details(config)
     learned = None
@@ -117,6 +121,9 @@ def run_live(args, config, observer, stop=None):
                 counters[key] = counters.get(key,0)+value
         counters['retunes'] = source.retunes
         observer.on_status(dict(
+            backend=args.backend,radio_driver=getattr(source,'driver','HackRF'),
+            stream_format=getattr(source,'stream_format','CS8'),
+            stream_overflows=getattr(source,'stream_overflows',None),
             capture_mode='hop-following',radio_diagnostics=args.radio_diagnostics,phase='binding' if acquiring() else
                 (decoder.phase if decoder.phase in ('reconfiguring','unsupported') else
                  'following' if following else 'reacquiring' if follower and follower.phase=='reacquiring'
@@ -233,6 +240,9 @@ def run_live(args, config, observer, stop=None):
                             'Rate/switch hints adapt from validated sync; searching supported LoRa profiles. '
                             'Retune gaps can miss packets; full-rate reception is not guaranteed.')
         source.start()
+        observer.on_message(f"Live RX backend: {args.backend} | "
+                            f"{getattr(source,'driver','HackRF')} | "
+                            f"{getattr(source,'stream_format','CS8')} at {FS} samples/s")
         if not acquiring():
             follower = start_follower()
         else:

@@ -2,6 +2,9 @@
 
 A standalone, **receive-only** HackRF ExpressLRS decoder with a live channel
 TUI, text/JSON output, frame logging, and deterministic IQ replay.
+**Native libhackrf remains the default.** An optional **SoapySDR** backend can
+use the same HackRF; other devices are not yet RF-validated. See
+[backend selection and installation](docs/soapy.md).
 
 **Target:** ExpressLRS 4.1.0 / OTA-v4, **2.4 GHz LoRa**, non-Gemini. Six
 LoRa profiles and all corresponding switch modes are configurable. **250Hz /
@@ -102,8 +105,8 @@ standard ratios already satisfy that cap. Other downlinks may remain uncaptured.
 `telemetry_early_retunes` counts these decisions. **50Hz/Wide/MM ID0 has a connected
 TX+RX live check: 90 link-statistics reports, 1,386 RC and 6 sync in 35 seconds,
 zero host drops/reacquisitions, maximum decoded RC gap 80ms.** The 50Hz timing
-gate includes the measured ~380–400us RX IRQ/radio-turnaround delay missing from
-the firmware-only estimate. **250Hz/Wide/MM ID0:** 65 link-statistics reports,
+gate includes the measured ~380–400us RF-start residual relative to the
+firmware-only estimate, not an isolated measurement of IRQ/radio latency. **250Hz/Wide/MM ID0:** 65 link-statistics reports,
 2,284 RC and 4 sync in 20s, zero host drops/reacquisitions, maximum RC gap 108ms.
 Its measured downlink starts ~240us before the uplink grid, not the firmware-only
 500us estimate; a +260us RF-start correction gives a narrow ±80us direction gate,
@@ -123,8 +126,10 @@ Other receiver hardware/firmware, custom ratios and MAVLink still need validatio
 
 ## Install
 
-Requires Linux/Unix, Python **3.11+**, NumPy, SciPy, and (for RF reception)
-the **libhackrf** host library (loaded directly using ctypes). The TUI uses Python's standard `curses` module; there is no
+Requires Linux/Unix, Python **3.11+**, NumPy, SciPy, and (for default RF reception)
+the **libhackrf** host library (loaded directly using ctypes). The optional
+`--backend soapy` requires SoapySDR ABI 0.8 and its device plugin instead; no Python
+SoapySDR bindings or GNU Radio are required. The TUI uses Python's standard `curses` module; there is no
 GUI/TUI framework dependency. Some distributions package curses separately.
 
 ```bash
@@ -142,6 +147,25 @@ Install the HackRF utilities if needed, e.g. on Fedora:
 ```bash
 pkexec dnf install hackrf
 ```
+
+## Alternative SoapySDR transport
+
+The existing command still uses native libhackrf. To use SoapySDR instead:
+
+```bash
+.venv/bin/elrs-monitor --backend soapy --bind-phrase julian \
+  --model-match on --model-id 0 --tui
+```
+
+The default Soapy selector is `driver=hackrf`; override it with `--device ARGS`.
+`--serial` works with both backends. There is **no automatic mid-stream failover**;
+restart with the other backend to establish a new sample clock. Replay is unchanged.
+
+Physical 150Hz/Wide check, 25s per backend: Soapy **2308 RC / 103 receiver stats**,
+native **2118 RC / 90 receiver stats**, both with decoded packets on all 80 nominal
+channels, zero host queue drops and no reacquisitions. Different acquisition times
+mean these totals are not a performance ranking. Other Soapy devices/profiles still
+need RF validation. [Dependencies, limitations and complete results](docs/soapy.md).
 
 ## Command-line settings
 
@@ -166,7 +190,7 @@ Other flags are optional:
 | Switch mode | Live startup hint Hybrid; fixed for legacy replay |
 | Model Match | Off |
 | Model ID | 0; ignored while Model Match is off |
-| Capture source | Live HackRF; first available device |
+| Capture source | Live native HackRF; first available device; optional `--backend soapy` |
 | Text output | Human-readable; use `--tui` or `--format json` to change |
 | DSP workers | 2 |
 | RX LNA / VGA gain | 16 / 16 dB; RF amplifier and antenna bias off |
@@ -486,7 +510,10 @@ Useful options:
 - `--stale-after 2`: change the TUI stale-sample age threshold.
 - `--lna 16 --vga 16`: conservative default RX gains; RF amplifier and antenna
   bias power are always disabled by the program.
-- `--serial SERIAL`: select a HackRF if more than one is attached.
+- `--serial SERIAL`: select a device by serial with either backend.
+- `--backend native|soapy`: native HackRF by default; SoapySDR is an explicit fallback.
+- `--device 'driver=hackrf,...'`: SoapySDR device selector; requires `--backend soapy`.
+- `--gain NAME=DB`: repeatable Soapy RX stage gain; AMP must remain 0.
 
 ## How it works and what it cannot do
 
@@ -586,7 +613,8 @@ src/elrs_monitor/
   cli.py          argument parsing, text/JSON presentation
   capture.py      legacy raw replay, bounded queue, overlap windows
   engine.py       entry point and fixed-recording replay pipeline
-  hackrf.py       receive-only native transport and retune epoch boundaries
+  hackrf.py       unchanged default native RX transport and retune epoch boundaries
+  soapy.py        optional receive-only SoapySDR transport (C API, CS8/CF32)
   fhss.py         firmware-compatible sequence and unwrapped hop/slot clock
   follow.py       validated phase tracking and independent tuning scheduler
   live.py         default live acquisition/following/reacquisition pipeline
