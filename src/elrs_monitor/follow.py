@@ -3,7 +3,7 @@ from collections import Counter
 import threading
 
 from .decoder import LiveDecoder
-from .telemetry import downlink_offset, DENOMINATORS
+from .telemetry import firmware_downlink_offset, DENOMINATORS
 from .hackrf import NativeSource
 from .fhss import (HopClock,sequence,FIRST_HZ,SPACING_HZ,SEQUENCE_COUNT,
                    CHANNEL_OFFSET_HZ,ACQUISITION_CENTER_HZ)
@@ -121,7 +121,7 @@ class HopFollower:
             # validated uplink clock. Standard ratios already meet this cap.
             # Preserve the existing quarantine, not uncertain retune samples.
             # Sacrifice preceding uplink IQ only at selected telemetry hops.
-            lead = max(self.tune_lead,-downlink_offset(self.profile)+NativeSource.SETTLE_SECONDS+.001)
+            lead = max(self.tune_lead,-firmware_downlink_offset(self.profile)+NativeSource.SETTLE_SECONDS+.001)
             deadline = boundary-lead
             if now>=deadline:
                 tuning_time = boundary

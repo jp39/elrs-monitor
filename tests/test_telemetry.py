@@ -7,7 +7,7 @@ from elrs_monitor.model import MonitorState
 from elrs_monitor.dashboard import render_lines, cells
 from elrs_monitor.profiles import PROFILES
 from elrs_monitor.telemetry import downlink_offset
-from test_modes import config, sync_packet, seal, observation
+from test_modes import config, sync_packet, seal, observation, rc_packet
 from test_hopping import FakeRadio
 
 
@@ -57,6 +57,32 @@ class TelemetryTests(unittest.TestCase):
         self.assertIs(d.anchor,anchor)
         self.assertEqual(d.counts['rc'],0)
         self.assertEqual(d.feed(dict(b,time_s=b['time_s']+.001)),[])
+
+    def test_physical_250hz_downlink_stays_separate_from_uplink_grid(self):
+        p = PROFILES['250Hz']
+        cfg = dict(binding_phrase='julian',model_id=0,model_match=True,
+                   packet_rate=p.name,switch_mode='Wide',ota_version=4)
+        d = TrackingDecoder(cfg)
+        sync = observation(bytes.fromhex('fe50831b045fec7f'),2.2698704875,p)
+        d.feed(sync);anchor=d.anchor
+        b = observation(bytes.fromhex('24003980643000fd'),2.5136339980769233,p)
+        b['channel_hz'] = 2432400000
+        frame, = d.feed(b)
+        self.assertEqual(frame['inferred_nonce'],192)
+        self.assertEqual(frame['telemetry']['uplink_rssi_1_dbm'],-57)
+        self.assertEqual(frame['telemetry']['uplink_lq_percent'],100)
+        self.assertEqual(frame['telemetry']['uplink_snr_db'],12.)
+        self.assertIs(d.anchor,anchor)
+        self.assertEqual(d.counts['rc'],0)
+        self.assertEqual(d.feed(dict(b,time_s=b['time_s']-.00012)),[])
+        # A transmitter without a connected RX can still send RC in an
+        # announced telemetry slot. The nonce alone must NOT label it downlink.
+        grid=anchor['time_s']+61*p.interval
+        uplink=observation(rc_packet(p,cfg,192),grid,p)
+        uplink['channel_hz']=b['channel_hz']
+        frame, = d.feed(uplink)
+        self.assertIn('rc',frame)
+        self.assertNotIn('telemetry',frame)
 
     def test_all_profiles_directions_nonce_wrap_modes_and_no_clock_or_rc_mutation(self):
         for p in PROFILES.values():

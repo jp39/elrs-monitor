@@ -53,7 +53,8 @@ or reacquisitions. A synthesized-IQ 50Hz/Wide → 250Hz/Hybrid transition passes
 through the real live engine/DSP and updates the model layout. **An actual
 transmitter rate-change handover still needs RF validation.** Transitions can
 lose packets and take seconds to reacquire; no seamless/full-rate guarantee.
-Other-rate telemetry timing is still experimental, independent of rate detection.
+Receiver telemetry is RF-validated at 50Hz/Wide and 250Hz/Wide; other-rate
+telemetry timing is still experimental, independent of rate detection.
 
 ## Receiver telemetry
 
@@ -100,8 +101,13 @@ standard ratios already satisfy that cap. Other downlinks may remain uncaptured.
 TX+RX live check: 90 link-statistics reports, 1,386 RC and 6 sync in 35 seconds,
 zero host drops/reacquisitions, maximum decoded RC gap 80ms.** The 50Hz timing
 gate includes the measured ~380–400us RX IRQ/radio-turnaround delay missing from
-the firmware-only estimate. Other PHY downlinks, custom ratios and MAVLink remain
-unvalidated on live RF; no complete telemetry or RC stream is guaranteed.
+the firmware-only estimate. **250Hz/Wide/MM ID0:** 65 link-statistics reports,
+2,284 RC and 4 sync in 20s, zero host drops/reacquisitions, maximum RC gap 108ms.
+Its measured downlink starts ~240us before the uplink grid, not the firmware-only
+500us estimate; a +260us RF-start correction gives a narrow ±80us direction gate,
+separate from the ±100us uplink gate. Retune scheduling still uses the earlier
+firmware estimate and is unchanged. Other PHY downlinks, custom ratios and
+MAVLink remain unvalidated on live RF; no complete telemetry/RC stream is guaranteed.
 
 ## Install
 
@@ -530,7 +536,7 @@ or loss-free long-run guarantee is made.
   parameter. No UID discovery from normal traffic; binding discovery requires
   an explicit transmitter Bind session. Model Match settings remain explicit.
 - No FLRC, Gemini, CRSF sensor/MAVLink message decoding, or data-payload reassembly.
-  Receiver link-statistics decoding is live-RF validated at 50Hz/Wide only.
+  Receiver link-statistics decoding is live-RF validated at 50Hz/Wide and 250Hz/Wide.
 - No command/transmit path, firmware flashing, receiver binding, or failsafe
   control. The dashboard is an instrument, not a flight-control receiver.
 - Use low transmitter power and antenna separation. Never directly connect a

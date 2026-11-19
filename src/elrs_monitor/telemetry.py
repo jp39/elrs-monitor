@@ -11,9 +11,21 @@ TOA_US = {'50Hz':10798, '100Hz Full':7605, '150Hz':5871,
 DENOMINATORS = (1,128,64,32,16,8,4,2)
 
 
-def downlink_offset(profile):
+def firmware_downlink_offset(profile):
+    """Earliest firmware-only estimate, retained for conservative retuning."""
     toa = TOA_US[profile.name]/1e6
     return toa+max(profile.interval-2*toa,.0002)-profile.interval
+
+
+def downlink_offset(profile):
+    """Expected RF start relative to the nonce's uplink grid, not RX IRQ time.
+
+    Physical SX1280 250Hz/Wide reports cluster at -250..-237us, rather than
+    firmware-only -500us. Include the measured +260us IRQ/radio turnaround.
+    50Hz keeps its existing, separately RF-validated wider gate. No correction
+    is guessed for unvalidated PHYs. Retuning still uses the earlier estimate.
+    """
+    return firmware_downlink_offset(profile)+(.000260 if profile.name=='250Hz' else 0)
 
 
 def link_details(sync):

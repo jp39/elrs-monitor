@@ -1,4 +1,49 @@
-# Validation — 0.8.0
+# Validation — 0.8.1
+
+## Physical 250Hz/Wide receiver telemetry correction
+
+After changing the transmitter from 50Hz to 250Hz, the user reported that the
+header correctly updated to 250Hz and RC continued, but RX remained UNSEEN.
+An 18s diagnostic confirmed following 250Hz/Wide/MM ID0: 2,069 RC / 3 sync,
+60 off-grid candidates, zero accepted telemetry, zero host drops/reacquisitions.
+This was a direction-timing failure, not a failed PHY handover.
+
+A 12s instrumented native-following run retained candidate bytes, timestamps,
+current uplink anchor and exhaustive CRC nonce checks. **32** link-statistics
+candidates had valid identity-seeded CRC at the expected telemetry nonce, correct
+predicted FHSS frequency, and RF start **-249.886..-236.589us** relative to the
+uplink grid (median -244.039us), rather than the firmware-only -500us prediction.
+
+The 250Hz RF start model now adds **+260us** to that estimate. The existing
+one-third-offset cap then supplies a **±80us gate centered at -240us**, disjoint
+from the ±100us uplink gate. This is not a blanket tolerance expansion. Slot,
+CRC/nonce and hop-frequency checks remain mandatory. Retune scheduling explicitly
+uses the earlier firmware-only estimate, preserving its previous timing and the
+4ms quarantine. 50Hz and other PHY direction models are unchanged.
+
+A subsequent **20s connected TX+RX run** at 250Hz/Wide/MM ID0 decoded:
+
+- **65 LINKSTATS / 2,284 RC / 4 sync**.
+- **Zero host queue drops or reacquisitions**, final state following.
+- Maximum RC gap **107.9998ms**, final gap 4ms; final DSP lag 3.204ms.
+- Receiver RSSI approximately -51..-53dBm, LQ 100%, SNR about +12dB, Model Match true.
+- 1,219 retunes / 76 selected early retunes; excluded IQ 5.287s, max control call 1.373ms.
+
+Physical fixture: sync `fe50831b045fec7f`, 2.2698704875s / 2440.4MHz,
+nonce131/index80; LINKSTATS `24003980643000fd`, 2.5136339980769233s /
+2432.4MHz, nonce192, RSSI -57dBm, LQ100, SNR12dB. One focused regression
+checks this fixture, rejection outside the narrow window, unchanged RC/anchor,
+and correct **uplink** classification of on-grid RC at an announced telemetry
+nonce. **128 tests pass**. Refeeding the instrumented observations retains all
+1,127 RC / 2 sync and now decodes all 32 previously rejected LINKSTATS.
+
+Artifacts: `/tmp/elrs-250-candidates.jsonl`,
+`/tmp/elrs-250-instrumented-live{.jsonl,.txt,.status}`,
+`/tmp/elrs-250-tlm-fixed-live{.jsonl,.txt,.status}`.
+These are bounded reception checks, not a loss-free/full-rate or latency claim.
+Other PHY telemetry timing remains RF-unvalidated.
+
+## 0.8.0 adaptive implementation and initial validation
 
 ## Adaptive live rate/switch implementation
 
